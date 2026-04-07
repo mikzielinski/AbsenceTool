@@ -518,9 +518,7 @@ async function runProcess1a() {
       `Process 1a zakończony.`,
       `Flexi row(s): ${flexiRows.length}.`,
       `Master updated row(s): ${balanceSummaryRows.length}.`,
-      saveResult.mode === "overwrite"
-        ? `Master nadpisany: ${saveResult.name}.`
-        : `Master zapisany jako download: ${saveResult.name}.`,
+      `Master nadpisany: ${saveResult.name}.`,
       `Pobrane pliki: Flexi-absence input.xlsx.`,
     ]);
   } catch (error) {
@@ -1138,33 +1136,13 @@ async function saveMasterWorkbook(workbook) {
     await writeArrayToHandle(state.masterFileHandle, array);
     return { mode: "overwrite", name: outputName };
   }
-  if (supportsFsAccess()) {
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: outputName,
-        types: [
-          {
-            description: "Excel workbook",
-            accept: {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-            },
-          },
-        ],
-      });
-      if (handle) {
-        await writeArrayToHandle(handle, array);
-        state.masterFileHandle = handle;
-        return { mode: "overwrite", name: outputName };
-      }
-    } catch (error) {
-      if (error && error.name === "AbortError") {
-        throw new Error("Zapis master anulowany.");
-      }
-      throw error;
-    }
+
+  // Hard requirement: never generate a new master download file.
+  if (!supportsFsAccess()) {
+    throw new Error("Ta przeglądarka nie wspiera nadpisania pliku master. Użyj Chrome/Edge i przycisku trybu NADPISANIA.");
   }
-  writeWorkbookDownload(workbook, outputName);
-  return { mode: "download", name: outputName };
+
+  throw new Error("Wybierz master przez przycisk 'tryb NADPISANIA', aby zapisać zmiany w tym samym pliku.");
 }
 
 async function writeArrayToHandle(handle, array) {
