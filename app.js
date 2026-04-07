@@ -274,12 +274,12 @@ function fillSelect(selectEl, values) {
 
 async function readWorkbookFromFile(file) {
   const buffer = await file.arrayBuffer();
-  let workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  let workbook = XLSX.read(buffer, { type: "array", cellDates: true, cellStyles: true });
   let sheetNames = getWorkbookSheetNames(workbook);
 
   // Fallbacks for files with non-standard metadata/order.
   if (sheetNames.length === 0) {
-    workbook = XLSX.read(buffer, { type: "array", cellDates: true, codepage: 65001 });
+    workbook = XLSX.read(buffer, { type: "array", cellDates: true, cellStyles: true, codepage: 65001 });
     sheetNames = getWorkbookSheetNames(workbook);
   }
   if (sheetNames.length === 0) {
@@ -508,12 +508,10 @@ async function runProcess1a() {
     writeWorkbookDownload(flexiWb, "Flexi-absence input.xlsx");
     log(`Flexi file generated (${flexiRows.length} row(s)).`);
 
-    const updatedMaster = cloneWorkbook(state.masterWorkbook);
-    updateCollectiveSheet(updatedMaster, ui.masterSheet.value, balanceSummaryRows, monthLabel);
-    const saveResult = await saveMasterWorkbook(updatedMaster);
+    updateCollectiveSheet(state.masterWorkbook, ui.masterSheet.value, balanceSummaryRows, monthLabel);
+    const saveResult = await saveMasterWorkbook(state.masterWorkbook);
     log(`Master updated (${balanceSummaryRows.length} employee(s)).`);
 
-    state.masterWorkbook = updatedMaster;
     setResultSummary([
       `Process 1a zakończony.`,
       `Flexi row(s): ${flexiRows.length}.`,
@@ -683,11 +681,6 @@ function buildBalanceSummaryFromSource(rows) {
     rec[type] = round2(Number(rec[type] || 0) + days);
   });
   return Array.from(resultMap.values());
-}
-
-function cloneWorkbook(wb) {
-  const arr = XLSX.write(wb, { type: "array", bookType: "xlsx" });
-  return XLSX.read(arr, { type: "array", cellDates: true });
 }
 
 function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
