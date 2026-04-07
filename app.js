@@ -51,6 +51,10 @@ const ui = {
   run2: document.getElementById("run2"),
   resultSummary: document.getElementById("resultSummary"),
   logOutput: document.getElementById("logOutput"),
+  quickHelp: document.getElementById("quickHelp"),
+  statusSource: document.getElementById("statusSource"),
+  statusMaster: document.getElementById("statusMaster"),
+  statusPdfs: document.getElementById("statusPdfs"),
 };
 
 init();
@@ -64,7 +68,9 @@ function init() {
   fillMonthSelect();
   setActiveTab("p1");
   bindEvents();
-  log("Ready. Wczytaj pliki źródłowe i uruchom proces.");
+  renderQuickHelp("p1");
+  refreshUiReadiness();
+  log("Gotowe. Zrób kroki 1-2-3 na ekranie.");
 }
 
 function fillMonthSelect() {
@@ -85,6 +91,11 @@ function bindEvents() {
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
   ui.masterFile.addEventListener("change", onMasterFilePicked);
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
+  ui.payslipFiles.addEventListener("change", refreshUiReadiness);
+  ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
+  ui.sourceSheet1b.addEventListener("change", refreshUiReadiness);
+  ui.masterSheet.addEventListener("change", refreshUiReadiness);
+  ui.masterSheetP2.addEventListener("change", refreshUiReadiness);
   ui.run1a.addEventListener("click", runProcess1a);
   ui.run1b.addEventListener("click", runProcess1b);
   ui.run2.addEventListener("click", runProcess2);
@@ -96,6 +107,8 @@ function setActiveTab(key) {
   ui.tabP2.classList.toggle("active", !onP1);
   ui.panelP1.classList.toggle("hidden", !onP1);
   ui.panelP2.classList.toggle("hidden", onP1);
+  renderQuickHelp(key);
+  refreshUiReadiness();
 }
 
 async function onSourceFilePicked(event) {
@@ -110,6 +123,7 @@ async function onSourceFilePicked(event) {
     fillSelect(ui.sourceSheet1a, state.sourceSheets);
     fillSelect(ui.sourceSheet1b, state.sourceSheets);
     log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
+    refreshUiReadiness();
   } catch (error) {
     showError(`Nie udało się wczytać source file: ${error.message}`);
   }
@@ -126,6 +140,7 @@ async function onMasterFilePicked(event) {
     state.masterSheets = state.masterWorkbook.SheetNames.slice();
     fillSelect(ui.masterSheet, state.masterSheets);
     log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
+    refreshUiReadiness();
   } catch (error) {
     showError(`Nie udało się wczytać master file: ${error.message}`);
   }
@@ -142,6 +157,7 @@ async function onMasterFileP2Picked(event) {
     state.masterSheetsP2 = state.masterWorkbookP2.SheetNames.slice();
     fillSelect(ui.masterSheetP2, state.masterSheetsP2);
     log(`Master (P2) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
+    refreshUiReadiness();
   } catch (error) {
     showError(`Nie udało się wczytać master file (P2): ${error.message}`);
   }
@@ -172,7 +188,7 @@ function sheetToRows(workbook, sheetName) {
 
 function showError(message) {
   log(`ERROR: ${message}`);
-  window.alert(message);
+  window.alert(`Ups, coś poszło nie tak.\n\n${message}`);
 }
 
 function log(message) {
@@ -188,6 +204,46 @@ function clearLog() {
 function setResultSummary(lines) {
   ui.resultSummary.classList.remove("empty-state");
   ui.resultSummary.innerHTML = `<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`;
+}
+
+function setBadge(el, ok, text) {
+  el.classList.remove("ok", "warn");
+  el.classList.add(ok ? "ok" : "warn");
+  el.textContent = text;
+}
+
+function refreshUiReadiness() {
+  const hasSource = !!state.sourceWorkbook;
+  const hasMaster = !!state.masterWorkbook;
+  const hasPdfs = (ui.payslipFiles.files || []).length > 0;
+  setBadge(ui.statusSource, hasSource, hasSource ? "OK: source file loaded" : "Brak: source file");
+  setBadge(ui.statusMaster, hasMaster, hasMaster ? "OK: master file loaded" : "Brak: master file");
+  setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak: PDF");
+
+  const readyP1 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
+  const p2MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
+  const readyP2 = hasPdfs && !!p2MasterReady;
+  ui.run1a.disabled = !readyP1;
+  ui.run1b.disabled = !readyP1;
+  ui.run2.disabled = !readyP2;
+}
+
+function renderQuickHelp(tabKey) {
+  if (tabKey === "p2") {
+    ui.quickHelp.innerHTML = `
+      <strong>Szybki start (Process 2):</strong>
+      1) Wybierz master file (opcjonalnie, jeśli nie wybrany w Process 1),
+      2) Wybierz PDF-y,
+      3) Kliknij <em>Run 2</em>.
+    `;
+    return;
+  }
+  ui.quickHelp.innerHTML = `
+    <strong>Szybki start (Process 1):</strong>
+    1) Wybierz source file,
+    2) Wybierz master file,
+    3) Kliknij <em>Run 1a</em> albo <em>Run 1b</em>.
+  `;
 }
 
 function escapeHtml(value) {

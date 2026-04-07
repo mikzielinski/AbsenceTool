@@ -96,6 +96,15 @@ body {
   margin-top: 0;
 }
 
+.easy-title {
+  margin-bottom: 6px;
+}
+
+.easy-subtitle {
+  margin-top: 0;
+  color: var(--muted);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(120px, 180px));
@@ -162,6 +171,23 @@ textarea {
   flex-wrap: wrap;
 }
 
+.quick-steps {
+  margin-top: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  padding: 10px 12px;
+}
+
+.quick-steps h4 {
+  margin: 0 0 6px;
+}
+
+.quick-steps ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .tab-button {
   border: 1px solid var(--border);
   background: #fff;
@@ -190,6 +216,33 @@ textarea {
   padding: 0 6px;
 }
 
+.status-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.status-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.status-item.ok {
+  border-color: #84cc16;
+  background: #f7fee7;
+}
+
+.status-item.warn {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.status-label {
+  font-weight: 700;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -198,6 +251,11 @@ textarea {
 
 .actions .primary {
   margin-top: 0;
+}
+
+.actions .primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
 }
 
 .hidden {

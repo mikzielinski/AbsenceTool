@@ -32,9 +32,8 @@
       <article class="panel">
         <h2>Holiday Balance Tool</h2>
         <p>
-          Webowa wersja narzędzia do dwóch procesów:
-          (1a/1b) przygotowanie i porównanie sald urlopowych oraz
-          (2) porównanie z paskami płac PDF.
+          Prosty tryb pracy krok po kroku:
+          najpierw wybierasz pliki, potem klikasz jeden przycisk.
         </p>
 
         <div class="shared-row">
@@ -44,6 +43,31 @@
           </label>
           <div class="hint">
             Pliki wynikowe zapisują się przez <strong>Download</strong> w przeglądarce.
+          </div>
+        </div>
+
+        <div class="step-list">
+          <div class="step-item"><strong>Krok 1:</strong> Wybierz plik source i master.</div>
+          <div class="step-item"><strong>Krok 2:</strong> Wybierz odpowiednie arkusze (sheet).</div>
+          <div class="step-item"><strong>Krok 3:</strong> Kliknij przycisk Run.</div>
+        </div>
+
+        <div class="status-grid">
+          <div class="status-card">
+            <span class="status-label">Source Excel</span>
+            <span id="sourceStatus" class="status-pill warn">Brak pliku</span>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Master Excel (P1)</span>
+            <span id="masterStatus" class="status-pill warn">Brak pliku</span>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Master Excel (P2)</span>
+            <span id="masterP2Status" class="status-pill warn">Opcjonalne</span>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Payslip PDF</span>
+            <span id="payslipStatus" class="status-pill warn">Brak pliku</span>
           </div>
         </div>
 
@@ -59,40 +83,42 @@
 
       <article id="panelP1" class="panel">
         <h3>Process 1a / 1b</h3>
+        <div id="errorBox" class="notice error hidden"></div>
 
         <fieldset class="form-block">
-          <legend>Current Holiday Report Denmark (.xlsx / .xls)</legend>
+          <legend>1) Current Holiday Report Denmark (.xlsx / .xls)</legend>
           <label>
-            Plik źródłowy
+            Wybierz plik source
             <input id="sourceFile" type="file" accept=".xlsx,.xls" />
           </label>
           <div class="form-grid">
             <label>
-              Sheet for 1a (absence data)
+              Wybierz arkusz dla 1a (absence data)
               <select id="sourceSheet1a"></select>
             </label>
             <label>
-              Sheet for 1b (Holiday Balance tab)
+              Wybierz arkusz dla 1b (Holiday Balance)
               <select id="sourceSheet1b"></select>
             </label>
           </div>
         </fieldset>
 
         <fieldset class="form-block">
-          <legend>"Holiday Balance" master file (.xlsx)</legend>
+          <legend>2) "Holiday Balance" master file (.xlsx)</legend>
           <label>
-            Plik master
+            Wybierz plik master
             <input id="masterFile" type="file" accept=".xlsx" />
           </label>
           <label>
-            Sheet (Sep2025-Aug2026)
+            Wybierz arkusz master (Sep2025-Aug2026)
             <select id="masterSheet"></select>
           </label>
         </fieldset>
 
+        <p class="hint-plain">Przyciski włączą się automatycznie, kiedy dane będą gotowe.</p>
         <div class="actions">
-          <button id="run1a" class="primary" type="button">▶ Run 1a - Generate Flexi file + update master</button>
-          <button id="run1b" class="primary" type="button">▶ Run 1b - Compare balances</button>
+          <button id="run1a" class="primary" type="button">▶ Uruchom 1a (zrób Flexi + zaktualizuj master)</button>
+          <button id="run1b" class="primary" type="button">▶ Uruchom 1b (porównaj salda)</button>
         </div>
       </article>
 
@@ -102,11 +128,11 @@
         <fieldset class="form-block">
           <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1)</legend>
           <label>
-            Master file for Process 2
+            Wybierz plik master dla Process 2
             <input id="masterFileP2" type="file" accept=".xlsx" />
           </label>
           <label>
-            Sheet for Process 2
+            Wybierz arkusz dla Process 2
             <select id="masterSheetP2"></select>
           </label>
         </fieldset>
@@ -114,13 +140,13 @@
         <fieldset class="form-block">
           <legend>Payslip PDFs</legend>
           <label>
-            Pliki PDF (jeden lub wiele)
+            Wybierz pliki PDF (jeden lub wiele)
             <input id="payslipFiles" type="file" accept=".pdf" multiple />
           </label>
         </fieldset>
 
         <div class="actions">
-          <button id="run2" class="primary" type="button">▶ Run 2 - Payslip reconciliation</button>
+          <button id="run2" class="primary" type="button">▶ Uruchom 2 (porównaj z payslip)</button>
         </div>
       </article>
 
