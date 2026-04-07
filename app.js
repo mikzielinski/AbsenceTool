@@ -26,6 +26,7 @@ const state = {
   sourceSheets: [],
   masterWorkbook: null,
   masterWorkbookName: "",
+  masterFileHandle: null,
   masterSheets: [],
   masterWorkbookP2: null,
   masterWorkbookNameP2: "",
@@ -42,6 +43,7 @@ const ui = {
   sourceSheet1a: document.getElementById("sourceSheet1a"),
   sourceSheet1b: document.getElementById("sourceSheet1b"),
   masterFile: document.getElementById("masterFile"),
+  masterFileFs: document.getElementById("masterFileFs"),
   masterSheet: document.getElementById("masterSheet"),
   masterFileP2: document.getElementById("masterFileP2"),
   masterSheetP2: document.getElementById("masterSheetP2"),
@@ -75,6 +77,9 @@ function init() {
   fillSelect(ui.masterSheetP2, []);
   refreshUiReadiness();
   log("Gotowe. Zrób kroki 1-2-3 na ekranie.");
+  if (ui.masterFileFs && !supportsFsAccess()) {
+    ui.masterFileFs.classList.add("hidden");
+  }
 }
 
 function fillMonthSelect() {
@@ -94,6 +99,9 @@ function bindEvents() {
   ui.tabP2.addEventListener("click", () => setActiveTab("p2"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
   ui.masterFile.addEventListener("change", onMasterFilePicked);
+  if (ui.masterFileFs) {
+    ui.masterFileFs.addEventListener("click", onMasterFileFsPicked);
+  }
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
   ui.payslipFiles.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
@@ -151,6 +159,7 @@ async function onMasterFilePicked(event) {
   if (!file) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterFileHandle = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
     hideInlineError();
@@ -160,6 +169,7 @@ async function onMasterFilePicked(event) {
   try {
     state.masterWorkbook = await readWorkbookFromFile(file);
     state.masterWorkbookName = file.name;
+    state.masterFileHandle = null;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
     fillSelect(ui.masterSheet, state.masterSheets);
     hideInlineError();
@@ -169,9 +179,47 @@ async function onMasterFilePicked(event) {
   } catch (error) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterFileHandle = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
     showError(`Nie udało się wczytać master file: ${error.message}`);
+  }
+}
+
+async function onMasterFileFsPicked() {
+  if (!supportsFsAccess()) {
+    showError("Ta przeglądarka nie wspiera bezpośredniego nadpisywania pliku.");
+    return;
+  }
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: [
+        {
+          description: "Excel workbook",
+          accept: {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+          },
+        },
+      ],
+    });
+    if (!handle) return;
+    const file = await handle.getFile();
+    state.masterWorkbook = await readWorkbookFromFile(file);
+    state.masterWorkbookName = file.name;
+    state.masterFileHandle = handle;
+    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
+    fillSelect(ui.masterSheet, state.masterSheets);
+    hideInlineError();
+    log(`Master loaded in overwrite mode: ${file.name} (${state.masterSheets.length} sheet(s)).`);
+    log(`Master sheets: ${state.masterSheets.join(" | ")}`);
+    refreshUiReadiness();
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      log("Wybór pliku master anulowany.");
+      return;
+    }
+    showError(`Nie udało się wczytać master file (tryb nadpisania): ${error.message}`);
   }
 }
 
@@ -462,16 +510,18 @@ async function runProcess1a() {
 
     const updatedMaster = cloneWorkbook(state.masterWorkbook);
     updateCollectiveSheet(updatedMaster, ui.masterSheet.value, balanceSummaryRows, monthLabel);
-    const masterOutputName = ensureXlsxName(state.masterWorkbookName.replace(".xlsx", "") + " - updated");
-    writeWorkbookDownload(updatedMaster, masterOutputName);
-    log(`Master updated in memory (${balanceSummaryRows.length} employee(s)).`);
+    const saveResult = await saveMasterWorkbook(updatedMaster);
+    log(`Master updated (${balanceSummaryRows.length} employee(s)).`);
 
     state.masterWorkbook = updatedMaster;
     setResultSummary([
       `Process 1a zakończony.`,
       `Flexi row(s): ${flexiRows.length}.`,
       `Master updated row(s): ${balanceSummaryRows.length}.`,
-      `Pobrane pliki: Flexi-absence input.xlsx oraz ${masterOutputName}.`,
+      saveResult.mode === "overwrite"
+        ? `Master nadpisany: ${saveResult.name}.`
+        : `Master zapisany jako download: ${saveResult.name}.`,
+      `Pobrane pliki: Flexi-absence input.xlsx.`,
     ]);
   } catch (error) {
     showError(error.message);
@@ -1079,6 +1129,52 @@ function autoWidth(ws, rows) {
 
 function writeWorkbookDownload(workbook, filename) {
   XLSX.writeFile(workbook, ensureXlsxName(filename));
+}
+
+async function saveMasterWorkbook(workbook) {
+  const outputName = ensureXlsxName(state.masterWorkbookName || "master.xlsx");
+  const array = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  if (state.masterFileHandle && supportsFsAccess()) {
+    await writeArrayToHandle(state.masterFileHandle, array);
+    return { mode: "overwrite", name: outputName };
+  }
+  if (supportsFsAccess()) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: outputName,
+        types: [
+          {
+            description: "Excel workbook",
+            accept: {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+            },
+          },
+        ],
+      });
+      if (handle) {
+        await writeArrayToHandle(handle, array);
+        state.masterFileHandle = handle;
+        return { mode: "overwrite", name: outputName };
+      }
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw new Error("Zapis master anulowany.");
+      }
+      throw error;
+    }
+  }
+  writeWorkbookDownload(workbook, outputName);
+  return { mode: "download", name: outputName };
+}
+
+async function writeArrayToHandle(handle, array) {
+  const writable = await handle.createWritable();
+  await writable.write(array);
+  await writable.close();
+}
+
+function supportsFsAccess() {
+  return Boolean(window.isSecureContext && window.showSaveFilePicker && window.showOpenFilePicker);
 }
 
 function ensureXlsxName(name) {
