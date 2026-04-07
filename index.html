@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payroll Process Platform</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Payroll Process Platform</h1>
+      <p>Modułowa platforma narzędzi payroll (wersja web na GitHub Pages)</p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <h2>Narzędzia</h2>
+      <button class="tool-button active" type="button">
+        Holiday comparer – Denmark
+      </button>
+      <button class="tool-button" type="button" disabled>
+        Absence validator (wkrótce)
+      </button>
+      <button class="tool-button" type="button" disabled>
+        Overtime auditor (wkrótce)
+      </button>
+    </aside>
+
+    <section class="content">
+      <article class="panel">
+        <h2>Holiday comparer – Denmark</h2>
+        <p>
+          Porównuje listę dat świąt używaną w Twoim payrollu z oficjalnym kalendarzem
+          świąt duńskich dla wybranego zakresu lat.
+        </p>
+
+        <div class="form-grid">
+          <label>
+            Rok od
+            <input id="startYear" type="number" min="1900" max="2100" />
+          </label>
+          <label>
+            Rok do
+            <input id="endYear" type="number" min="1900" max="2100" />
+          </label>
+        </div>
+
+        <label>
+          Daty świąt z Twojego systemu (format: YYYY-MM-DD, separowane spacją, przecinkiem lub nową linią)
+          <textarea
+            id="payrollDates"
+            rows="7"
+            placeholder="2026-01-01&#10;2026-03-29&#10;2026-03-30"
+          ></textarea>
+        </label>
+
+        <button id="compareButton" class="primary" type="button">Porównaj</button>
+
+        <div id="errors" class="errors" role="alert"></div>
+      </article>
+
+      <article class="panel">
+        <h3>Podsumowanie</h3>
+        <div id="summaryCards" class="cards"></div>
+      </article>
+
+      <article class="panel">
+        <h3>Brakujące święta (w payrollu ich nie ma)</h3>
+        <div id="missingTable"></div>
+      </article>
+
+      <article class="panel">
+        <h3>Nadmiarowe daty (są w payrollu, nie ma ich w oficjalnym kalendarzu DK)</h3>
+        <div id="extraTable"></div>
+      </article>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
