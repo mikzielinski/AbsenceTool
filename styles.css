@@ -42,8 +42,9 @@ body {
 
 .brand-logo {
   height: 28px;
-  width: auto;
-  object-fit: contain;
+  width: 120px;
+  object-fit: cover;
+  object-position: left center;
   display: block;
 }
 
@@ -59,6 +60,19 @@ body {
   margin: 0;
   color: var(--muted);
   font-size: 0.86rem;
+}
+
+.brand-title.logo-only h1 {
+  margin: 0;
+  color: var(--primary);
+  font-size: 1.05rem;
+  letter-spacing: 0.2px;
+}
+
+.brand-title.logo-only p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .layout {
