@@ -648,11 +648,9 @@ function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
     throw new Error("Master sheet jest pusty lub nie istnieje.");
   }
   const range = XLSX.utils.decode_range(ws["!ref"]);
-  const monthIdx = findMonthColumnIndex(ws, range, monthLabel);
-  const specialIdx = monthIdx + 1;
-  if (specialIdx > range.e.c) {
-    throw new Error(`Brak kolumny Special obok month '${monthLabel}'.`);
-  }
+  const monthCols = findMonthColumns(ws, range, monthLabel);
+  const monthIdx = monthCols.holidayIdx;
+  const specialIdx = monthCols.specialIdx;
 
   const bySap = new Map();
   for (let r = 0; r <= range.e.r; r += 1) {
@@ -672,28 +670,85 @@ function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
   });
 }
 
-function findMonthColumnIndex(ws, range, monthLabel) {
+function findMonthColumns(ws, range, monthLabel) {
   const target = normalizeMonthLabel(monthLabel);
-  const candidates = [];
-  for (let c = 0; c <= range.e.c; c += 1) {
-    const v = getWorksheetCellValue(ws, 0, c);
-    const normalized = normalizeMonthLabel(v);
-    if (normalized) {
-      candidates.push(normalized);
-    }
-    if (normalized === target) {
-      return c;
-    }
-  }
-  if (target) {
+  const seenMonths = [];
+  const matches = [];
+  const maxHeaderRow = Math.min(range.e.r, 4);
+  for (let r = 0; r <= maxHeaderRow; r += 1) {
     for (let c = 0; c <= range.e.c; c += 1) {
-      const v = getWorksheetCellValue(ws, 1, c);
-      if (normalizeMonthLabel(v) === target) {
-        return c;
+      const normalized = normalizeMonthCell(ws, r, c);
+      if (normalized) {
+        seenMonths.push(normalized);
+      }
+      if (normalized === target) {
+        matches.push({ row: r, col: c });
       }
     }
   }
-  throw new Error(`Month '${monthLabel}' not found in master header. Found: ${Array.from(new Set(candidates)).join(", ")}`);
+
+  for (const match of matches) {
+    const pair = resolveMonthPairColumns(ws, range, match.row, match.col);
+    if (pair) {
+      return pair;
+    }
+  }
+
+  throw new Error(
+    `Month '${monthLabel}' not found in master header. Found: ${Array.from(new Set(seenMonths)).join(", ")}`
+  );
+}
+
+function normalizeMonthCell(ws, rowIdx, colIdx) {
+  const ref = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+  const cell = ws[ref];
+  if (!cell) {
+    return "";
+  }
+  return (
+    normalizeMonthLabel(cell.w) ||
+    normalizeMonthLabel(cell.v) ||
+    normalizeMonthLabel(getWorksheetCellValue(ws, rowIdx, colIdx))
+  );
+}
+
+function resolveMonthPairColumns(ws, range, monthRow, monthCol) {
+  const pairRows = [monthRow + 1, monthRow + 2].filter((row) => row <= range.e.r);
+  for (const row of pairRows) {
+    const left = normalizeSubheaderLabel(getWorksheetCellValue(ws, row, monthCol));
+    const right = normalizeSubheaderLabel(getWorksheetCellValue(ws, row, monthCol + 1));
+    if (left === "holiday" && right === "special") {
+      return { holidayIdx: monthCol, specialIdx: monthCol + 1 };
+    }
+    if (left === "special" && right === "holiday") {
+      return { holidayIdx: monthCol + 1, specialIdx: monthCol };
+    }
+  }
+
+  if (monthCol + 1 <= range.e.c) {
+    return { holidayIdx: monthCol, specialIdx: monthCol + 1 };
+  }
+  if (monthCol - 1 >= 0) {
+    return { holidayIdx: monthCol, specialIdx: monthCol - 1 };
+  }
+  return null;
+}
+
+function normalizeSubheaderLabel(value) {
+  const text = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!text) {
+    return "";
+  }
+  if (text.includes("special")) {
+    return "special";
+  }
+  if (text.includes("holiday")) {
+    return "holiday";
+  }
+  return "";
 }
 
 function getWorksheetCellValue(ws, rowIdx, colIdx) {
