@@ -26,40 +26,57 @@ body {
 
 .topbar {
   background: #ffffff;
-  color: #fff;
-  padding: 12px 20px;
+  color: var(--text);
+  padding: 8px 16px;
   border-bottom: 3px solid var(--primary);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
 .brand-bar {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 10px;
   max-width: 1240px;
   margin: 0 auto;
 }
 
+.brand-logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  border-right: 1px solid #dbe3ef;
+}
+
 .brand-logo {
-  height: 28px;
-  width: 120px;
+  height: 20px;
+  width: 64px;
   object-fit: cover;
   object-position: left center;
   display: block;
 }
 
+.brand-wordmark {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  line-height: 1;
+}
+
 .brand-title h1 {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
   color: var(--primary);
   letter-spacing: 0.3px;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   line-height: 1.2;
 }
 
 .brand-title p {
   margin: 0;
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
 }
 
 .brand-title.logo-only h1 {
@@ -78,7 +95,7 @@ body {
 .layout {
   display: grid;
   grid-template-columns: 280px 1fr;
-  min-height: calc(100vh - 95px);
+  min-height: calc(100vh - 66px);
 }
 
 .sidebar {
