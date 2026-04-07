@@ -96,6 +96,15 @@ body {
   margin-top: 0;
 }
 
+.easy-title {
+  margin-bottom: 6px;
+}
+
+.easy-subtitle {
+  margin-top: 0;
+  color: var(--muted);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(120px, 180px));
@@ -110,7 +119,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   margin-top: 6px;
   border: 1px solid var(--border);
@@ -137,6 +147,141 @@ textarea {
 
 .primary:hover {
   background: var(--primary-dark);
+}
+
+.shared-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.hint {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.tab-buttons {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-steps {
+  margin-top: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  padding: 10px 12px;
+}
+
+.quick-steps h4 {
+  margin: 0 0 6px;
+}
+
+.quick-steps ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.tab-button {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.form-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 0 0 12px;
+}
+
+.form-block legend {
+  font-size: 0.9rem;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.status-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.status-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.status-item.ok {
+  border-color: #84cc16;
+  background: #f7fee7;
+}
+
+.status-item.warn {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.status-label {
+  font-weight: 700;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actions .primary {
+  margin-top: 0;
+}
+
+.actions .primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.hidden {
+  display: none;
+}
+
+.result-summary ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.result-summary li {
+  margin: 4px 0;
+}
+
+.log-output {
+  margin: 0;
+  min-height: 220px;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b1020;
+  color: #dbeafe;
+  padding: 12px;
+  font-size: 0.86rem;
 }
 
 .errors {
@@ -213,6 +358,10 @@ th {
   }
 
   .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .shared-row {
     grid-template-columns: 1fr;
   }
 }

@@ -1,203 +1,870 @@
 "use strict";
 
-const compareButton = document.getElementById("compareButton");
-const startYearInput = document.getElementById("startYear");
-const endYearInput = document.getElementById("endYear");
-const payrollDatesInput = document.getElementById("payrollDates");
-const errorsContainer = document.getElementById("errors");
-const summaryCards = document.getElementById("summaryCards");
-const missingTableContainer = document.getElementById("missingTable");
-const extraTableContainer = document.getElementById("extraTable");
+const MONTHS = [
+  "Sep-25", "Oct-25", "Nov-25", "Dec-25",
+  "Jan-26", "Feb-26", "Mar-26", "Apr-26",
+  "May-26", "Jun-26", "Jul-26", "Aug-26",
+];
 
-const holidayNameByKey = {
-  "01-01": "New Year's Day",
-  "12-25": "Christmas Day",
-  "12-26": "2nd Christmas Day"
+const FLEXI_PROJECT_MAP = {
+  "1402 holidays (normal vacation days)": { type: "Vacation", code: "748" },
+  "1405 company days": { type: "Extra vacation days", code: "629" },
 };
 
-initializeDefaults();
-renderSummary(0, 0, 0);
-renderTable(missingTableContainer, []);
-renderTable(extraTableContainer, []);
+const BALANCE_TYPE_MAP = {
+  "1402 holidays (normal vacation days)": "Holiday",
+  "1403 special holidays": "Special",
+};
 
-compareButton.addEventListener("click", () => {
-  errorsContainer.textContent = "";
+const RED_FILL = { fgColor: { rgb: "FFFF0000" } };
+const HEADER_FILL = { fgColor: { rgb: "FF4472C4" } };
+const HEADER_FONT = { bold: true, color: { rgb: "FFFFFFFF" } };
 
-  const startYear = Number(startYearInput.value);
-  const endYear = Number(endYearInput.value);
+const state = {
+  sourceWorkbook: null,
+  sourceWorkbookName: "",
+  sourceSheets: [],
+  masterWorkbook: null,
+  masterWorkbookName: "",
+  masterSheets: [],
+  masterWorkbookP2: null,
+  masterWorkbookNameP2: "",
+  masterSheetsP2: [],
+};
 
-  if (!isValidYear(startYear) || !isValidYear(endYear)) {
-    errorsContainer.textContent = "Podaj poprawny rok od i do (1900-2100).";
-    return;
+const ui = {
+  monthLabel: document.getElementById("monthLabel"),
+  tabP1: document.getElementById("tabP1"),
+  tabP2: document.getElementById("tabP2"),
+  panelP1: document.getElementById("panelP1"),
+  panelP2: document.getElementById("panelP2"),
+  sourceFile: document.getElementById("sourceFile"),
+  sourceSheet1a: document.getElementById("sourceSheet1a"),
+  sourceSheet1b: document.getElementById("sourceSheet1b"),
+  masterFile: document.getElementById("masterFile"),
+  masterSheet: document.getElementById("masterSheet"),
+  masterFileP2: document.getElementById("masterFileP2"),
+  masterSheetP2: document.getElementById("masterSheetP2"),
+  payslipFiles: document.getElementById("payslipFiles"),
+  run1a: document.getElementById("run1a"),
+  run1b: document.getElementById("run1b"),
+  run2: document.getElementById("run2"),
+  resultSummary: document.getElementById("resultSummary"),
+  logOutput: document.getElementById("logOutput"),
+  quickHelp: document.getElementById("quickHelp"),
+  statusSource: document.getElementById("statusSource"),
+  statusMaster: document.getElementById("statusMaster"),
+  statusPdfs: document.getElementById("statusPdfs"),
+};
+
+init();
+
+function init() {
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 
-  if (startYear > endYear) {
-    errorsContainer.textContent = "Rok od nie może być większy niż rok do.";
-    return;
-  }
-
-  const parseResult = parsePayrollDates(payrollDatesInput.value);
-  if (parseResult.invalidTokens.length > 0) {
-    errorsContainer.textContent = `Niepoprawne daty: ${parseResult.invalidTokens.join(", ")}`;
-    return;
-  }
-
-  const officialHolidays = buildOfficialHolidaySet(startYear, endYear);
-  const payrollDates = parseResult.dates;
-
-  const missingDates = [...officialHolidays].filter((date) => !payrollDates.has(date)).sort();
-  const extraDates = [...payrollDates].filter((date) => !officialHolidays.has(date)).sort();
-
-  renderSummary(officialHolidays.size, missingDates.length, extraDates.length);
-  renderTable(missingTableContainer, missingDates);
-  renderTable(extraTableContainer, extraDates);
-});
-
-function initializeDefaults() {
-  const currentYear = new Date().getFullYear();
-  startYearInput.value = currentYear;
-  endYearInput.value = currentYear + 1;
+  fillMonthSelect();
+  setActiveTab("p1");
+  bindEvents();
+  renderQuickHelp("p1");
+  refreshUiReadiness();
+  log("Gotowe. Zrób kroki 1-2-3 na ekranie.");
 }
 
-function isValidYear(year) {
-  return Number.isInteger(year) && year >= 1900 && year <= 2100;
+function fillMonthSelect() {
+  ui.monthLabel.innerHTML = "";
+  MONTHS.forEach((month) => {
+    const option = document.createElement("option");
+    option.value = month;
+    option.textContent = month;
+    ui.monthLabel.appendChild(option);
+  });
+  const now = new Date().toLocaleString("en-US", { month: "short", year: "2-digit" }).replace(" ", "-");
+  ui.monthLabel.value = MONTHS.includes(now) ? now : MONTHS[0];
 }
 
-function parsePayrollDates(rawText) {
-  const invalidTokens = [];
-  const dates = new Set();
-  const tokens = rawText
-    .split(/[\s,;]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+function bindEvents() {
+  ui.tabP1.addEventListener("click", () => setActiveTab("p1"));
+  ui.tabP2.addEventListener("click", () => setActiveTab("p2"));
+  ui.sourceFile.addEventListener("change", onSourceFilePicked);
+  ui.masterFile.addEventListener("change", onMasterFilePicked);
+  ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
+  ui.payslipFiles.addEventListener("change", refreshUiReadiness);
+  ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
+  ui.sourceSheet1b.addEventListener("change", refreshUiReadiness);
+  ui.masterSheet.addEventListener("change", refreshUiReadiness);
+  ui.masterSheetP2.addEventListener("change", refreshUiReadiness);
+  ui.run1a.addEventListener("click", runProcess1a);
+  ui.run1b.addEventListener("click", runProcess1b);
+  ui.run2.addEventListener("click", runProcess2);
+}
 
-  for (const token of tokens) {
-    if (!isValidIsoDate(token)) {
-      invalidTokens.push(token);
+function setActiveTab(key) {
+  const onP1 = key === "p1";
+  ui.tabP1.classList.toggle("active", onP1);
+  ui.tabP2.classList.toggle("active", !onP1);
+  ui.panelP1.classList.toggle("hidden", !onP1);
+  ui.panelP2.classList.toggle("hidden", onP1);
+  renderQuickHelp(key);
+  refreshUiReadiness();
+}
+
+async function onSourceFilePicked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    state.sourceWorkbook = await readWorkbookFromFile(file);
+    state.sourceWorkbookName = file.name;
+    state.sourceSheets = state.sourceWorkbook.SheetNames.slice();
+    fillSelect(ui.sourceSheet1a, state.sourceSheets);
+    fillSelect(ui.sourceSheet1b, state.sourceSheets);
+    log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
+    refreshUiReadiness();
+  } catch (error) {
+    showError(`Nie udało się wczytać source file: ${error.message}`);
+  }
+}
+
+async function onMasterFilePicked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    state.masterWorkbook = await readWorkbookFromFile(file);
+    state.masterWorkbookName = file.name;
+    state.masterSheets = state.masterWorkbook.SheetNames.slice();
+    fillSelect(ui.masterSheet, state.masterSheets);
+    log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
+    refreshUiReadiness();
+  } catch (error) {
+    showError(`Nie udało się wczytać master file: ${error.message}`);
+  }
+}
+
+async function onMasterFileP2Picked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    state.masterWorkbookP2 = await readWorkbookFromFile(file);
+    state.masterWorkbookNameP2 = file.name;
+    state.masterSheetsP2 = state.masterWorkbookP2.SheetNames.slice();
+    fillSelect(ui.masterSheetP2, state.masterSheetsP2);
+    log(`Master (P2) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
+    refreshUiReadiness();
+  } catch (error) {
+    showError(`Nie udało się wczytać master file (P2): ${error.message}`);
+  }
+}
+
+function fillSelect(selectEl, values) {
+  selectEl.innerHTML = "";
+  values.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    selectEl.appendChild(option);
+  });
+}
+
+async function readWorkbookFromFile(file) {
+  const buffer = await file.arrayBuffer();
+  return XLSX.read(buffer, { type: "array", cellDates: true });
+}
+
+function sheetToRows(workbook, sheetName) {
+  const ws = workbook.Sheets[sheetName];
+  if (!ws) {
+    throw new Error(`Sheet '${sheetName}' not found.`);
+  }
+  return XLSX.utils.sheet_to_json(ws, { defval: null, raw: false });
+}
+
+function showError(message) {
+  log(`ERROR: ${message}`);
+  window.alert(`Ups, coś poszło nie tak.\n\n${message}`);
+}
+
+function log(message) {
+  const ts = new Date().toLocaleTimeString("pl-PL");
+  ui.logOutput.textContent += `[${ts}] ${message}\n`;
+  ui.logOutput.scrollTop = ui.logOutput.scrollHeight;
+}
+
+function clearLog() {
+  ui.logOutput.textContent = "";
+}
+
+function setResultSummary(lines) {
+  ui.resultSummary.classList.remove("empty-state");
+  ui.resultSummary.innerHTML = `<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`;
+}
+
+function setBadge(el, ok, text) {
+  el.classList.remove("ok", "warn");
+  el.classList.add(ok ? "ok" : "warn");
+  el.textContent = text;
+}
+
+function refreshUiReadiness() {
+  const hasSource = !!state.sourceWorkbook;
+  const hasMaster = !!state.masterWorkbook;
+  const hasPdfs = (ui.payslipFiles.files || []).length > 0;
+  setBadge(ui.statusSource, hasSource, hasSource ? "OK: source file loaded" : "Brak: source file");
+  setBadge(ui.statusMaster, hasMaster, hasMaster ? "OK: master file loaded" : "Brak: master file");
+  setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak: PDF");
+
+  const readyP1 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
+  const p2MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
+  const readyP2 = hasPdfs && !!p2MasterReady;
+  ui.run1a.disabled = !readyP1;
+  ui.run1b.disabled = !readyP1;
+  ui.run2.disabled = !readyP2;
+}
+
+function renderQuickHelp(tabKey) {
+  if (tabKey === "p2") {
+    ui.quickHelp.innerHTML = `
+      <strong>Szybki start (Process 2):</strong>
+      1) Wybierz master file (opcjonalnie, jeśli nie wybrany w Process 1),
+      2) Wybierz PDF-y,
+      3) Kliknij <em>Run 2</em>.
+    `;
+    return;
+  }
+  ui.quickHelp.innerHTML = `
+    <strong>Szybki start (Process 1):</strong>
+    1) Wybierz source file,
+    2) Wybierz master file,
+    3) Kliknij <em>Run 1a</em> albo <em>Run 1b</em>.
+  `;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function normalizeSap(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const raw = String(value).trim();
+  if (!raw) {
+    return "";
+  }
+  const num = Number(raw);
+  if (!Number.isNaN(num)) {
+    return String(Math.trunc(num));
+  }
+  return raw.split(".")[0].trim();
+}
+
+function parseDate(value) {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  }
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+  }
+  const isoMatch = String(value).trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (isoMatch) {
+    const day = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const year = Number(isoMatch[3]);
+    const utc = new Date(Date.UTC(year, month - 1, day));
+    if (utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day) {
+      return utc;
+    }
+  }
+  return null;
+}
+
+function formatDateIso(date) {
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function addWorkingDays(startDate, nDays) {
+  const whole = nDays > 0 ? Math.max(1, Math.floor(Number(nDays))) : 0;
+  if (whole <= 0) {
+    return new Date(startDate.getTime());
+  }
+  let current = new Date(startDate.getTime());
+  let counted = 1;
+  while (counted < whole) {
+    current = new Date(current.getTime() + 24 * 60 * 60 * 1000);
+    if (current.getUTCDay() >= 1 && current.getUTCDay() <= 5) {
+      counted += 1;
+    }
+  }
+  return current;
+}
+
+function nextWorkday(date) {
+  let current = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  while (current.getUTCDay() === 0 || current.getUTCDay() === 6) {
+    current = new Date(current.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return current;
+}
+
+function validateP1Inputs() {
+  if (!state.sourceWorkbook) {
+    throw new Error("Wybierz Current Holiday Report.");
+  }
+  if (!state.masterWorkbook) {
+    throw new Error("Wybierz Holiday Balance master file.");
+  }
+  if (!ui.sourceSheet1a.value || !ui.sourceSheet1b.value || !ui.masterSheet.value) {
+    throw new Error("Wybierz wymagane sheety dla Process 1.");
+  }
+}
+
+async function runProcess1a() {
+  clearLog();
+  try {
+    validateP1Inputs();
+    log("=== Process 1a ===");
+    const monthLabel = ui.monthLabel.value;
+    const sourceRows = sheetToRows(state.sourceWorkbook, ui.sourceSheet1a.value);
+    const flexiRows = buildFlexiAbsenceRows(sourceRows);
+    const balanceSummaryRows = buildBalanceSummaryFromSource(sourceRows);
+
+    const flexiWb = buildWorkbookFromRows(
+      "Flexi absence input",
+      [
+        "EMPLOYEE NUMBER",
+        "Absence Code",
+        "NAME",
+        "Absence Type",
+        "From",
+        "To",
+        "Days",
+      ],
+      flexiRows
+    );
+    writeWorkbookDownload(flexiWb, "Flexi-absence input.xlsx");
+    log(`Flexi file generated (${flexiRows.length} row(s)).`);
+
+    const updatedMaster = cloneWorkbook(state.masterWorkbook);
+    updateCollectiveSheet(updatedMaster, ui.masterSheet.value, balanceSummaryRows, monthLabel);
+    const masterOutputName = ensureXlsxName(state.masterWorkbookName.replace(".xlsx", "") + " - updated");
+    writeWorkbookDownload(updatedMaster, masterOutputName);
+    log(`Master updated in memory (${balanceSummaryRows.length} employee(s)).`);
+
+    state.masterWorkbook = updatedMaster;
+    setResultSummary([
+      `Process 1a zakończony.`,
+      `Flexi row(s): ${flexiRows.length}.`,
+      `Master updated row(s): ${balanceSummaryRows.length}.`,
+      `Pobrane pliki: Flexi-absence input.xlsx oraz ${masterOutputName}.`,
+    ]);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+async function runProcess1b() {
+  clearLog();
+  try {
+    validateP1Inputs();
+    log("=== Process 1b ===");
+    const srcSummary = loadSourceBalanceSummary(
+      sheetToRows(state.sourceWorkbook, ui.sourceSheet1b.value)
+    );
+    const { totals, names } = readCollectiveTotals(
+      state.masterWorkbook,
+      ui.masterSheet.value
+    );
+    const compareRows = buildBalanceComparisonRows(srcSummary, totals, names);
+    const outWb = buildBalanceComparisonWorkbook(compareRows);
+    const outName = `Balance comparison ${todayIso()}.xlsx`;
+    writeWorkbookDownload(outWb, outName);
+    const mismatch = compareRows.filter((row) => row.Match !== true).length;
+    setResultSummary([
+      "Process 1b zakończony.",
+      `Records: ${compareRows.length}.`,
+      `Matched: ${compareRows.length - mismatch}.`,
+      `Mismatched: ${mismatch}.`,
+      `Pobrany plik: ${outName}.`,
+    ]);
+    log(`Comparison completed. Mismatch(es): ${mismatch}.`);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function resolveMasterForP2() {
+  if (state.masterWorkbookP2 && ui.masterSheetP2.value) {
+    return { wb: state.masterWorkbookP2, sheet: ui.masterSheetP2.value };
+  }
+  if (state.masterWorkbook && ui.masterSheet.value) {
+    return { wb: state.masterWorkbook, sheet: ui.masterSheet.value };
+  }
+  throw new Error("Wybierz master file/sheet dla Process 2 (lub użyj z Process 1).");
+}
+
+async function runProcess2() {
+  clearLog();
+  try {
+    log("=== Process 2 ===");
+    const pdfFiles = Array.from(ui.payslipFiles.files || []);
+    if (pdfFiles.length === 0) {
+      throw new Error("Wybierz co najmniej jeden payslip PDF.");
+    }
+    const { wb, sheet } = resolveMasterForP2();
+    const { totals, specials, names } = readCollectiveTotals(wb, sheet);
+    const records = [];
+    for (const file of pdfFiles) {
+      log(`Parsing ${file.name} ...`);
+      const fileRecords = await parsePayslipBatch(file);
+      records.push(...fileRecords);
+      log(`  ${fileRecords.length} employee record(s).`);
+    }
+    const reconciliationRows = buildPayslipReportRows(records, totals, specials, names);
+    const outWb = buildPayslipReportWorkbook(reconciliationRows);
+    const outName = `Payslip reconciliation ${todayIso()}.xlsx`;
+    writeWorkbookDownload(outWb, outName);
+    const mismatches = reconciliationRows.filter((row) => !(row.Result && row["Special result"])).length;
+    setResultSummary([
+      "Process 2 zakończony.",
+      `Records: ${reconciliationRows.length}.`,
+      `Matched: ${reconciliationRows.length - mismatches}.`,
+      `Mismatched: ${mismatches}.`,
+      `Pobrany plik: ${outName}.`,
+    ]);
+    log(`Reconciliation completed. Mismatch(es): ${mismatches}.`);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function buildFlexiAbsenceRows(rows) {
+  const required = ["Project", "User", "SAP ID", "Start Date", "Days"];
+  const missing = required.filter((column) => !rows.some((row) => Object.hasOwn(row, column)));
+  if (missing.length > 0) {
+    throw new Error(`Brak kolumn w source sheet (1a): ${missing.join(", ")}`);
+  }
+
+  const filtered = rows
+    .map((row) => ({
+      projectKey: String(row.Project || "").trim().toLowerCase(),
+      user: String(row.User || "").trim(),
+      sap: normalizeSap(row["SAP ID"]),
+      startDate: parseDate(row["Start Date"]),
+      days: Number(row.Days || 0),
+    }))
+    .filter((row) => row.sap && row.startDate && Object.hasOwn(FLEXI_PROJECT_MAP, row.projectKey))
+    .sort((a, b) => {
+      if (a.sap !== b.sap) return a.sap.localeCompare(b.sap);
+      if (a.projectKey !== b.projectKey) return a.projectKey.localeCompare(b.projectKey);
+      return a.startDate - b.startDate;
+    });
+
+  if (filtered.length === 0) {
+    throw new Error("Brak pasujących rekordów 1a po filtrze project map.");
+  }
+
+  const grouped = [];
+  let i = 0;
+  while (i < filtered.length) {
+    const base = filtered[i];
+    const map = FLEXI_PROJECT_MAP[base.projectKey];
+    let currentStart = base.startDate;
+    let currentDays = Number(base.days || 0);
+    let currentTo = addWorkingDays(currentStart, currentDays);
+    let j = i + 1;
+
+    while (j < filtered.length) {
+      const row = filtered[j];
+      if (row.sap !== base.sap || row.projectKey !== base.projectKey) {
+        break;
+      }
+      const expectedNext = nextWorkday(currentTo);
+      if (formatDateIso(row.startDate) === formatDateIso(expectedNext)) {
+        currentDays += Number(row.days || 0);
+        currentTo = addWorkingDays(currentStart, currentDays);
+        j += 1;
+      } else {
+        break;
+      }
+    }
+
+    grouped.push({
+      "EMPLOYEE NUMBER": base.sap,
+      "Absence Code": map.code,
+      NAME: base.user,
+      "Absence Type": map.type,
+      From: formatDateIso(currentStart),
+      To: formatDateIso(currentTo),
+      Days: round2(currentDays),
+    });
+    i = j;
+  }
+  return grouped;
+}
+
+function buildBalanceSummaryFromSource(rows) {
+  const resultMap = new Map();
+  rows.forEach((row) => {
+    const sap = normalizeSap(row["SAP ID"] ?? row.ID);
+    const project = String(row.Project || "").trim().toLowerCase();
+    if (!sap || !project) {
+      return;
+    }
+    const type = BALANCE_TYPE_MAP[project] || "Holiday";
+    const days = Number(row.Days || 0);
+    if (!resultMap.has(sap)) {
+      resultMap.set(sap, { "SAP ID": sap, Holiday: 0, Special: 0 });
+    }
+    const rec = resultMap.get(sap);
+    rec[type] = round2(Number(rec[type] || 0) + days);
+  });
+  return Array.from(resultMap.values());
+}
+
+function cloneWorkbook(wb) {
+  const arr = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  return XLSX.read(arr, { type: "array", cellDates: true });
+}
+
+function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
+  const rows = sheetToRows(workbook, sheetName);
+  if (rows.length === 0) {
+    throw new Error("Master sheet jest pusty.");
+  }
+
+  const header = Object.keys(rows[0]);
+  const monthIdx = findMonthColumnIndex(header, monthLabel);
+  const specialIdx = monthIdx + 1;
+  if (specialIdx >= header.length) {
+    throw new Error(`Brak kolumny Special obok month '${monthLabel}'.`);
+  }
+  const monthCol = header[monthIdx];
+  const specialCol = header[specialIdx];
+
+  const bySap = new Map();
+  rows.forEach((row, idx) => {
+    const sap = normalizeSap(row[header[0]]);
+    if (sap) bySap.set(sap, idx);
+  });
+
+  summaryRows.forEach((rec) => {
+    const idx = bySap.get(rec["SAP ID"]);
+    if (idx === undefined) {
+      log(`(!) SAP ${rec["SAP ID"]} not found in master - skipped.`);
+      return;
+    }
+    rows[idx][monthCol] = rec.Holiday ? round2(rec.Holiday) : null;
+    rows[idx][specialCol] = rec.Special ? round2(rec.Special) : null;
+    log(`OK SAP ${rec["SAP ID"]}: Holiday=${round2(rec.Holiday)}, Special=${round2(rec.Special)}`);
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows, { skipHeader: false });
+  workbook.Sheets[sheetName] = ws;
+}
+
+function findMonthColumnIndex(header, monthLabel) {
+  const target = String(monthLabel).trim().toLowerCase();
+  const idx = header.findIndex((name) => String(name).trim().toLowerCase() === target);
+  if (idx < 0) {
+    throw new Error(`Month '${monthLabel}' not found in master header.`);
+  }
+  return idx;
+}
+
+function loadSourceBalanceSummary(rows) {
+  if (rows.length === 0) {
+    throw new Error("Holiday Balance tab is empty.");
+  }
+  const cols = Object.keys(rows[0]);
+  const idCol = findColumn(cols, ["Holid", "SAP ID", "ID"]);
+  const nameCol = findColumn(cols, ["Name", "Employee", "Employee Name"]);
+  const totalCol = findColumn(cols, ["Total holidays", "Total holiday balance"]);
+  if (!idCol || !totalCol) {
+    throw new Error(`Holiday Balance tab missing required columns. Found: ${cols.join(", ")}`);
+  }
+  return rows
+    .filter((row) => row[idCol] !== null && row[idCol] !== "")
+    .map((row) => ({
+      "SAP ID": normalizeSap(row[idCol]),
+      "Employee Name": nameCol ? String(row[nameCol] || "").trim() : "",
+      "Total holidays": toNumberOrNull(row[totalCol]),
+    }))
+    .filter((row) => row["SAP ID"]);
+}
+
+function findColumn(columns, candidates) {
+  const byLower = new Map(columns.map((c) => [String(c).trim().toLowerCase(), c]));
+  for (const candidate of candidates) {
+    const key = candidate.toLowerCase();
+    if (byLower.has(key)) {
+      return byLower.get(key);
+    }
+  }
+  return null;
+}
+
+function readCollectiveTotals(workbook, sheetName) {
+  const rows = sheetToRows(workbook, sheetName);
+  if (rows.length === 0) {
+    throw new Error("Master sheet is empty.");
+  }
+  const header = Object.keys(rows[0]);
+  const holidayCol = findColumnContaining(header, "total holiday balance");
+  const specialCol = findColumnContaining(header, "total special holiday balance");
+  const nameCol = findColumn(header, ["Employee", "Name", "Employee Name"]);
+  if (!holidayCol) {
+    throw new Error("Master: 'Total holiday balance' column not found.");
+  }
+
+  const totals = {};
+  const specials = {};
+  const names = {};
+  rows.forEach((row) => {
+    const sap = normalizeSap(row[header[0]]);
+    if (!sap) return;
+    totals[sap] = round2(Number(row[holidayCol] || 0));
+    specials[sap] = round2(Number((specialCol && row[specialCol]) || 0));
+    if (nameCol && row[nameCol]) {
+      names[sap] = String(row[nameCol]).trim();
+    }
+  });
+  return { totals, specials, names };
+}
+
+function findColumnContaining(columns, fragment) {
+  const f = fragment.toLowerCase();
+  return columns.find((col) => String(col).toLowerCase().includes(f)) || null;
+}
+
+function buildBalanceComparisonRows(srcSummary, totals, names) {
+  return srcSummary.map((rec) => {
+    const sap = rec["SAP ID"];
+    const src = toNumberOrNull(rec["Total holidays"]);
+    const mst = toNumberOrNull(totals[sap]);
+    return {
+      "SAP ID": sap,
+      "Employee Name": rec["Employee Name"] || names[sap] || sap,
+      "Total holidays (source)": src,
+      "Total holiday balance (master)": mst,
+      Match: src !== null && mst !== null ? round2(src) === round2(mst) : false,
+    };
+  });
+}
+
+function buildWorkbookFromRows(sheetName, headers, rows) {
+  const wsRows = [headers, ...rows.map((row) => headers.map((h) => row[h] ?? null))];
+  const ws = XLSX.utils.aoa_to_sheet(wsRows);
+  applyHeaderStyles(ws, headers.length);
+  autoWidth(ws, wsRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  return wb;
+}
+
+function buildBalanceComparisonWorkbook(rows) {
+  const headers = [
+    "SAP ID",
+    "Employee Name",
+    "Total holidays (source)",
+    "Total holiday balance (master)",
+    "Match",
+  ];
+  const wsRows = [headers, ...rows.map((row) => headers.map((h) => row[h] ?? null))];
+  const ws = XLSX.utils.aoa_to_sheet(wsRows);
+  applyHeaderStyles(ws, headers.length);
+  rows.forEach((row, idx) => {
+    if (row.Match !== true) {
+      const ref = XLSX.utils.encode_cell({ r: idx + 1, c: 2 });
+      if (!ws[ref]) ws[ref] = { t: "s", v: "" };
+      ws[ref].s = { fill: RED_FILL };
+    }
+  });
+  autoWidth(ws, wsRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Balance comparison");
+  return wb;
+}
+
+async function parsePayslipBatch(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
+  const pdf = await loadingTask.promise;
+  const records = [];
+  for (let i = 1; i <= pdf.numPages; i += 1) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const text = textContent.items.map((item) => item.str).join("\n");
+    if (!/Employeeno/i.test(text)) {
       continue;
     }
-    dates.add(token);
+    const rec = parseEmployeeBlock(text);
+    if (rec.sap_id !== "UNKNOWN") {
+      records.push(rec);
+    }
   }
-
-  return { dates, invalidTokens };
+  return records;
 }
 
-function isValidIsoDate(dateText) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-    return false;
+function parseEmployeeBlock(text) {
+  const em = text.match(/Employeeno[:\s]+(\d+)/i);
+  const sap = em ? em[1].trim() : "UNKNOWN";
+  const nameMatch = text.match(/^([A-Za-z][A-Za-z\s]+?)\s*\nEmployeeno/im);
+  const name = nameMatch ? nameMatch[1].trim() : "Unknown";
+  const hTotal = text.match(/Holidays total\s+([\d.,\-]+)\s+([\d.,\-]+)/i);
+  const pHoliday = hTotal ? parseFlexibleNum(hTotal[2]) : null;
+  const specialTwo = text.match(/Special holidays\s+([\d.,\-]+)\s+([\d.,\-]+)/i);
+  const specialOne = text.match(/Special holidays\s+([\d.,\-]+)/i);
+  const pSpecial = specialTwo ? parseFlexibleNum(specialTwo[2]) : (specialOne ? parseFlexibleNum(specialOne[1]) : null);
+  return {
+    sap_id: sap,
+    name,
+    payslip_holidays_total: pHoliday,
+    payslip_special_total: pSpecial,
+  };
+}
+
+function parseFlexibleNum(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const hasDot = value.includes(".");
+  const hasComma = value.includes(",");
+  if (hasDot && hasComma) {
+    if (value.lastIndexOf(".") > value.lastIndexOf(",")) {
+      return round2(Number(value.replaceAll(",", "")));
+    }
+    return round2(Number(value.replaceAll(".", "").replaceAll(",", ".")));
   }
-
-  const [year, month, day] = dateText.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-}
-
-function buildOfficialHolidaySet(startYear, endYear) {
-  const holidays = new Set();
-
-  for (let year = startYear; year <= endYear; year += 1) {
-    addDate(holidays, `${year}-01-01`);
-    addDate(holidays, `${year}-12-25`);
-    addDate(holidays, `${year}-12-26`);
-
-    const easterSunday = getEasterSundayUtc(year);
-    addDate(holidays, formatDate(addDays(easterSunday, -3)), "Maundy Thursday");
-    addDate(holidays, formatDate(addDays(easterSunday, -2)), "Good Friday");
-    addDate(holidays, formatDate(addDays(easterSunday, 0)), "Easter Sunday");
-    addDate(holidays, formatDate(addDays(easterSunday, 1)), "Easter Monday");
-    addDate(holidays, formatDate(addDays(easterSunday, 26)), "General Prayer Day");
-    addDate(holidays, formatDate(addDays(easterSunday, 39)), "Ascension Day");
-    addDate(holidays, formatDate(addDays(easterSunday, 49)), "Whit Sunday");
-    addDate(holidays, formatDate(addDays(easterSunday, 50)), "Whit Monday");
+  if (hasComma) {
+    return round2(Number(value.replaceAll(",", ".")));
   }
-
-  return holidays;
+  return round2(Number(value));
 }
 
-function addDate(set, dateString, optionalName) {
-  set.add(dateString);
-  if (optionalName) {
-    holidayNameByKey[dateString.slice(5)] = optionalName;
+function buildPayslipReportRows(records, totals, specials, names) {
+  return records.map((rec) => {
+    const sap = rec.sap_id;
+    const eh = totals[sap] ?? null;
+    const es = specials[sap] ?? null;
+    const ph = rec.payslip_holidays_total;
+    const ps = rec.payslip_special_total;
+    return {
+      "SAP ID / Employee No": sap,
+      "Employee Name": names[sap] || rec.name || "Unknown",
+      "Excel report value": eh,
+      "Payslip value": ph,
+      Result: eh !== null && ph !== null ? round2(eh) === round2(ph) : false,
+      "Excel special holiday balance": es,
+      "Payslip special holiday value": ps,
+      "Special result": es !== null && ps !== null ? round2(es) === round2(ps) : true,
+    };
+  });
+}
+
+function buildPayslipReportWorkbook(rows) {
+  const headers = [
+    "SAP ID / Employee No",
+    "Employee Name",
+    "Excel report value",
+    "Payslip value",
+    "Result",
+    "Excel special holiday balance",
+    "Payslip special holiday value",
+    "Special result",
+  ];
+  const wsRows = [headers, ...rows.map((row) => headers.map((h) => row[h] ?? null))];
+  const ws = XLSX.utils.aoa_to_sheet(wsRows);
+  applyHeaderStyles(ws, headers.length);
+  rows.forEach((row, idx) => {
+    const r = idx + 1;
+    if (row.Result !== true) {
+      markRed(ws, r, 2);
+      markRed(ws, r, 3);
+      markRed(ws, r, 4);
+    }
+    if (row["Special result"] !== true) {
+      markRed(ws, r, 5);
+      markRed(ws, r, 6);
+      markRed(ws, r, 7);
+    }
+  });
+  autoWidth(ws, wsRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Reconciliation");
+  return wb;
+}
+
+function markRed(ws, rowIndex, colIndex) {
+  const ref = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+  if (!ws[ref]) ws[ref] = { t: "s", v: "" };
+  ws[ref].s = { fill: RED_FILL };
+}
+
+function applyHeaderStyles(ws, count) {
+  for (let c = 0; c < count; c += 1) {
+    const ref = XLSX.utils.encode_cell({ r: 0, c });
+    if (!ws[ref]) ws[ref] = { t: "s", v: "" };
+    ws[ref].s = {
+      fill: HEADER_FILL,
+      font: HEADER_FONT,
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    };
   }
 }
 
-function getEasterSundayUtc(year) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-
-  return new Date(Date.UTC(year, month - 1, day));
+function autoWidth(ws, rows) {
+  const widthMap = [];
+  rows.forEach((row) => {
+    row.forEach((value, idx) => {
+      const len = String(value ?? "").length;
+      widthMap[idx] = Math.min(Math.max(widthMap[idx] || 8, len + 2), 50);
+    });
+  });
+  ws["!cols"] = widthMap.map((wch) => ({ wch }));
 }
 
-function addDays(date, deltaDays) {
-  const cloned = new Date(date.getTime());
-  cloned.setUTCDate(cloned.getUTCDate() + deltaDays);
-  return cloned;
+function writeWorkbookDownload(workbook, filename) {
+  XLSX.writeFile(workbook, ensureXlsxName(filename));
 }
 
-function formatDate(date) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function ensureXlsxName(name) {
+  return name.endsWith(".xlsx") ? name : `${name}.xlsx`;
 }
 
-function renderSummary(officialCount, missingCount, extraCount) {
-  summaryCards.innerHTML = `
-    <div class="card">
-      <div class="label">Oficjalne święta DK (zakres)</div>
-      <div class="value">${officialCount}</div>
-    </div>
-    <div class="card">
-      <div class="label">Brakujące</div>
-      <div class="value ${missingCount === 0 ? "ok" : "warn"}">${missingCount}</div>
-    </div>
-    <div class="card">
-      <div class="label">Nadmiarowe</div>
-      <div class="value ${extraCount === 0 ? "ok" : "danger"}">${extraCount}</div>
-    </div>
-  `;
+function round2(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return 0;
+  return Math.round(num * 100) / 100;
 }
 
-function renderTable(container, dates) {
-  if (dates.length === 0) {
-    container.innerHTML = '<p class="empty-state">Brak pozycji.</p>';
-    return;
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
   }
+  const num = Number(String(value).replaceAll(",", "."));
+  return Number.isNaN(num) ? null : round2(num);
+}
 
-  const rows = dates
-    .map((date) => {
-      const holidayName = holidayNameByKey[date.slice(5)] || "-";
-      return `<tr><td>${date}</td><td>${holidayName}</td></tr>`;
-    })
-    .join("");
-
-  container.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Data</th>
-          <th>Nazwa święta</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
