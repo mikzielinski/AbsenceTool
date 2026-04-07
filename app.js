@@ -129,11 +129,12 @@ async function onSourceFilePicked(event) {
   try {
     state.sourceWorkbook = await readWorkbookFromFile(file);
     state.sourceWorkbookName = file.name;
-    state.sourceSheets = state.sourceWorkbook.SheetNames.slice();
+    state.sourceSheets = getWorkbookSheetNames(state.sourceWorkbook);
     fillSelect(ui.sourceSheet1a, state.sourceSheets);
     fillSelect(ui.sourceSheet1b, state.sourceSheets);
     hideInlineError();
     log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
+    log(`Source sheets: ${state.sourceSheets.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
     state.sourceWorkbook = null;
@@ -159,10 +160,11 @@ async function onMasterFilePicked(event) {
   try {
     state.masterWorkbook = await readWorkbookFromFile(file);
     state.masterWorkbookName = file.name;
-    state.masterSheets = state.masterWorkbook.SheetNames.slice();
+    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
     fillSelect(ui.masterSheet, state.masterSheets);
     hideInlineError();
     log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
+    log(`Master sheets: ${state.masterSheets.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
     state.masterWorkbook = null;
@@ -187,10 +189,11 @@ async function onMasterFileP2Picked(event) {
   try {
     state.masterWorkbookP2 = await readWorkbookFromFile(file);
     state.masterWorkbookNameP2 = file.name;
-    state.masterSheetsP2 = state.masterWorkbookP2.SheetNames.slice();
+    state.masterSheetsP2 = getWorkbookSheetNames(state.masterWorkbookP2);
     fillSelect(ui.masterSheetP2, state.masterSheetsP2);
     hideInlineError();
     log(`Master (P2) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
+    log(`Master (P2) sheets: ${state.masterSheetsP2.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
     state.masterWorkbookP2 = null;
@@ -203,14 +206,17 @@ async function onMasterFileP2Picked(event) {
 
 function fillSelect(selectEl, values) {
   selectEl.innerHTML = "";
-  if (!values || values.length === 0) {
+  const cleanValues = Array.isArray(values)
+    ? values.map((v) => String(v || "").trim()).filter(Boolean)
+    : [];
+  if (cleanValues.length === 0) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "-- brak arkuszy --";
     selectEl.appendChild(option);
     return;
   }
-  values.forEach((name) => {
+  cleanValues.forEach((name) => {
     const option = document.createElement("option");
     option.value = name;
     option.textContent = name;
@@ -221,13 +227,35 @@ function fillSelect(selectEl, values) {
 async function readWorkbookFromFile(file) {
   const buffer = await file.arrayBuffer();
   let workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+  let sheetNames = getWorkbookSheetNames(workbook);
+
+  // Fallbacks for files with non-standard metadata/order.
+  if (sheetNames.length === 0) {
     workbook = XLSX.read(buffer, { type: "array", cellDates: true, codepage: 65001 });
+    sheetNames = getWorkbookSheetNames(workbook);
   }
-  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+  if (sheetNames.length === 0) {
+    const probe = XLSX.read(buffer, { type: "array", bookSheets: true, bookProps: true });
+    sheetNames = getWorkbookSheetNames(probe);
+  }
+
+  if (sheetNames.length === 0) {
     throw new Error("Plik nie zawiera żadnych arkuszy lub ma nieobsługiwany format.");
   }
+
+  workbook.SheetNames = sheetNames;
   return workbook;
+}
+
+function getWorkbookSheetNames(workbook) {
+  const fromSheetNames = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  const fromSheetObject = workbook?.Sheets ? Object.keys(workbook.Sheets) : [];
+  const fromWorkbookMeta = Array.isArray(workbook?.Workbook?.Sheets)
+    ? workbook.Workbook.Sheets.map((sheet) => sheet?.name)
+    : [];
+  return Array.from(new Set([...fromSheetNames, ...fromSheetObject, ...fromWorkbookMeta]
+    .map((name) => String(name || "").trim())
+    .filter(Boolean)));
 }
 
 function sheetToRows(workbook, sheetName) {
