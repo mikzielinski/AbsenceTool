@@ -1,19 +1,32 @@
 # AbsenceTool - Payroll Process Platform
 
-Statyczna platforma webowa do obsługi procesów payroll, gotowa do hostowania na GitHub Pages.
+Statyczna platforma webowa do obsługi procesów payroll.
 
-## Co jest zaimplementowane
+## Tool #1: Holiday Balance Tool (web)
 
-- Moduł `Holiday comparer - Denmark`
-  - porównanie dat świąt z payrollu z oficjalnym kalendarzem DK,
-  - zakres lat konfigurowany przez użytkownika,
-  - walidacja formatu dat (`YYYY-MM-DD`),
-  - raport: daty brakujące i nadmiarowe.
-- Szkielet pod kolejne moduły payroll (placeholdery w UI).
+Wersja webowa narzędzia z procesami:
 
-## Uruchomienie lokalne
+- **Process 1a** - Build "Flexi-absence input" from Current Holiday Report
+- **Process 1b** - Compare Holiday Balance tab in Current Report vs master file
+- **Process 2** - Compare master file totals vs payslip PDFs
 
-To aplikacja statyczna. Wystarczy otworzyć plik `index.html` w przeglądarce.
+### Co ważne
+
+- Działa **bez instalacji Pythona**.
+- Działa **bez pip / virtualenv / pakietów lokalnych**.
+- To aplikacja front-end (HTML/CSS/JS) uruchamiana w przeglądarce.
+
+## Uruchomienie lokalne (zero-install)
+
+1. Otwórz `index.html` w przeglądarce (Chrome/Edge/Firefox).
+2. Załaduj pliki przez UI:
+   - source report (`.xlsx/.xls`),
+   - master file (`.xlsx`),
+   - payslip PDFs (`.pdf`) dla Process 2.
+3. Kliknij odpowiedni przycisk Run.
+4. Raporty są pobierane jako pliki `.xlsx` przez przeglądarkę.
+
+Nie trzeba instalować nic w systemie.
 
 ## GitHub Pages
 

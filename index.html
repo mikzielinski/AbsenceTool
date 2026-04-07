@@ -10,7 +10,7 @@
   <header class="topbar">
     <div>
       <h1>Payroll Process Platform</h1>
-      <p>Modułowa platforma narzędzi payroll (wersja web na GitHub Pages)</p>
+      <p>Tool #1: Holiday Balance Tool (wersja web na GitHub Pages)</p>
     </div>
   </header>
 
@@ -18,66 +18,126 @@
     <aside class="sidebar">
       <h2>Narzędzia</h2>
       <button class="tool-button active" type="button">
-        Holiday comparer – Denmark
+        1) Holiday Balance Tool
       </button>
       <button class="tool-button" type="button" disabled>
-        Absence validator (wkrótce)
+        2) Absence validator (wkrótce)
       </button>
       <button class="tool-button" type="button" disabled>
-        Overtime auditor (wkrótce)
+        3) Overtime auditor (wkrótce)
       </button>
     </aside>
 
     <section class="content">
       <article class="panel">
-        <h2>Holiday comparer – Denmark</h2>
+        <h2>Holiday Balance Tool</h2>
         <p>
-          Porównuje listę dat świąt używaną w Twoim payrollu z oficjalnym kalendarzem
-          świąt duńskich dla wybranego zakresu lat.
+          Webowa wersja narzędzia do dwóch procesów:
+          (1a/1b) przygotowanie i porównanie sald urlopowych oraz
+          (2) porównanie z paskami płac PDF.
         </p>
 
-        <div class="form-grid">
+        <div class="shared-row">
           <label>
-            Rok od
-            <input id="startYear" type="number" min="1900" max="2100" />
+            Miesiąc (dla zapisu do mastera)
+            <select id="monthLabel"></select>
           </label>
-          <label>
-            Rok do
-            <input id="endYear" type="number" min="1900" max="2100" />
-          </label>
+          <div class="hint">
+            Pliki wynikowe zapisują się przez <strong>Download</strong> w przeglądarce.
+          </div>
         </div>
 
-        <label>
-          Daty świąt z Twojego systemu (format: YYYY-MM-DD, separowane spacją, przecinkiem lub nową linią)
-          <textarea
-            id="payrollDates"
-            rows="7"
-            placeholder="2026-01-01&#10;2026-03-29&#10;2026-03-30"
-          ></textarea>
-        </label>
+        <div class="tab-buttons">
+          <button id="tabP1" class="tab-button active" type="button">
+            Process 1 (1a + 1b)
+          </button>
+          <button id="tabP2" class="tab-button" type="button">
+            Process 2
+          </button>
+        </div>
+      </article>
 
-        <button id="compareButton" class="primary" type="button">Porównaj</button>
+      <article id="panelP1" class="panel">
+        <h3>Process 1a / 1b</h3>
 
-        <div id="errors" class="errors" role="alert"></div>
+        <fieldset class="form-block">
+          <legend>Current Holiday Report Denmark (.xlsx / .xls)</legend>
+          <label>
+            Plik źródłowy
+            <input id="sourceFile" type="file" accept=".xlsx,.xls" />
+          </label>
+          <div class="form-grid">
+            <label>
+              Sheet for 1a (absence data)
+              <select id="sourceSheet1a"></select>
+            </label>
+            <label>
+              Sheet for 1b (Holiday Balance tab)
+              <select id="sourceSheet1b"></select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-block">
+          <legend>"Holiday Balance" master file (.xlsx)</legend>
+          <label>
+            Plik master
+            <input id="masterFile" type="file" accept=".xlsx" />
+          </label>
+          <label>
+            Sheet (Sep2025-Aug2026)
+            <select id="masterSheet"></select>
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button id="run1a" class="primary" type="button">▶ Run 1a - Generate Flexi file + update master</button>
+          <button id="run1b" class="primary" type="button">▶ Run 1b - Compare balances</button>
+        </div>
+      </article>
+
+      <article id="panelP2" class="panel hidden">
+        <h3>Process 2</h3>
+
+        <fieldset class="form-block">
+          <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1)</legend>
+          <label>
+            Master file for Process 2
+            <input id="masterFileP2" type="file" accept=".xlsx" />
+          </label>
+          <label>
+            Sheet for Process 2
+            <select id="masterSheetP2"></select>
+          </label>
+        </fieldset>
+
+        <fieldset class="form-block">
+          <legend>Payslip PDFs</legend>
+          <label>
+            Pliki PDF (jeden lub wiele)
+            <input id="payslipFiles" type="file" accept=".pdf" multiple />
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button id="run2" class="primary" type="button">▶ Run 2 - Payslip reconciliation</button>
+        </div>
       </article>
 
       <article class="panel">
-        <h3>Podsumowanie</h3>
-        <div id="summaryCards" class="cards"></div>
+        <h3>Wynik ostatniego uruchomienia</h3>
+        <div id="resultSummary" class="result-summary empty-state">Brak uruchomień.</div>
       </article>
 
       <article class="panel">
-        <h3>Brakujące święta (w payrollu ich nie ma)</h3>
-        <div id="missingTable"></div>
-      </article>
-
-      <article class="panel">
-        <h3>Nadmiarowe daty (są w payrollu, nie ma ich w oficjalnym kalendarzu DK)</h3>
-        <div id="extraTable"></div>
+        <h3>Log</h3>
+        <pre id="logOutput" class="log-output"></pre>
       </article>
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
