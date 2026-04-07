@@ -51,10 +51,11 @@ const ui = {
   run2: document.getElementById("run2"),
   resultSummary: document.getElementById("resultSummary"),
   logOutput: document.getElementById("logOutput"),
-  quickHelp: document.getElementById("quickHelp"),
-  statusSource: document.getElementById("statusSource"),
-  statusMaster: document.getElementById("statusMaster"),
-  statusPdfs: document.getElementById("statusPdfs"),
+  statusSource: document.getElementById("sourceStatus"),
+  statusMaster: document.getElementById("masterStatus"),
+  statusMasterP2: document.getElementById("masterP2Status"),
+  statusPdfs: document.getElementById("payslipStatus"),
+  errorBox: document.getElementById("errorBox"),
 };
 
 init();
@@ -68,7 +69,10 @@ function init() {
   fillMonthSelect();
   setActiveTab("p1");
   bindEvents();
-  renderQuickHelp("p1");
+  fillSelect(ui.sourceSheet1a, []);
+  fillSelect(ui.sourceSheet1b, []);
+  fillSelect(ui.masterSheet, []);
+  fillSelect(ui.masterSheetP2, []);
   refreshUiReadiness();
   log("Gotowe. Zrób kroki 1-2-3 na ekranie.");
 }
@@ -107,13 +111,19 @@ function setActiveTab(key) {
   ui.tabP2.classList.toggle("active", !onP1);
   ui.panelP1.classList.toggle("hidden", !onP1);
   ui.panelP2.classList.toggle("hidden", onP1);
-  renderQuickHelp(key);
   refreshUiReadiness();
 }
 
 async function onSourceFilePicked(event) {
   const file = event.target.files?.[0];
   if (!file) {
+    state.sourceWorkbook = null;
+    state.sourceWorkbookName = "";
+    state.sourceSheets = [];
+    fillSelect(ui.sourceSheet1a, []);
+    fillSelect(ui.sourceSheet1b, []);
+    hideInlineError();
+    refreshUiReadiness();
     return;
   }
   try {
@@ -122,9 +132,15 @@ async function onSourceFilePicked(event) {
     state.sourceSheets = state.sourceWorkbook.SheetNames.slice();
     fillSelect(ui.sourceSheet1a, state.sourceSheets);
     fillSelect(ui.sourceSheet1b, state.sourceSheets);
+    hideInlineError();
     log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
     refreshUiReadiness();
   } catch (error) {
+    state.sourceWorkbook = null;
+    state.sourceWorkbookName = "";
+    state.sourceSheets = [];
+    fillSelect(ui.sourceSheet1a, []);
+    fillSelect(ui.sourceSheet1b, []);
     showError(`Nie udało się wczytać source file: ${error.message}`);
   }
 }
@@ -132,6 +148,12 @@ async function onSourceFilePicked(event) {
 async function onMasterFilePicked(event) {
   const file = event.target.files?.[0];
   if (!file) {
+    state.masterWorkbook = null;
+    state.masterWorkbookName = "";
+    state.masterSheets = [];
+    fillSelect(ui.masterSheet, []);
+    hideInlineError();
+    refreshUiReadiness();
     return;
   }
   try {
@@ -139,9 +161,14 @@ async function onMasterFilePicked(event) {
     state.masterWorkbookName = file.name;
     state.masterSheets = state.masterWorkbook.SheetNames.slice();
     fillSelect(ui.masterSheet, state.masterSheets);
+    hideInlineError();
     log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
     refreshUiReadiness();
   } catch (error) {
+    state.masterWorkbook = null;
+    state.masterWorkbookName = "";
+    state.masterSheets = [];
+    fillSelect(ui.masterSheet, []);
     showError(`Nie udało się wczytać master file: ${error.message}`);
   }
 }
@@ -149,6 +176,12 @@ async function onMasterFilePicked(event) {
 async function onMasterFileP2Picked(event) {
   const file = event.target.files?.[0];
   if (!file) {
+    state.masterWorkbookP2 = null;
+    state.masterWorkbookNameP2 = "";
+    state.masterSheetsP2 = [];
+    fillSelect(ui.masterSheetP2, []);
+    hideInlineError();
+    refreshUiReadiness();
     return;
   }
   try {
@@ -156,15 +189,27 @@ async function onMasterFileP2Picked(event) {
     state.masterWorkbookNameP2 = file.name;
     state.masterSheetsP2 = state.masterWorkbookP2.SheetNames.slice();
     fillSelect(ui.masterSheetP2, state.masterSheetsP2);
+    hideInlineError();
     log(`Master (P2) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
     refreshUiReadiness();
   } catch (error) {
+    state.masterWorkbookP2 = null;
+    state.masterWorkbookNameP2 = "";
+    state.masterSheetsP2 = [];
+    fillSelect(ui.masterSheetP2, []);
     showError(`Nie udało się wczytać master file (P2): ${error.message}`);
   }
 }
 
 function fillSelect(selectEl, values) {
   selectEl.innerHTML = "";
+  if (!values || values.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "-- brak arkuszy --";
+    selectEl.appendChild(option);
+    return;
+  }
   values.forEach((name) => {
     const option = document.createElement("option");
     option.value = name;
@@ -175,7 +220,14 @@ function fillSelect(selectEl, values) {
 
 async function readWorkbookFromFile(file) {
   const buffer = await file.arrayBuffer();
-  return XLSX.read(buffer, { type: "array", cellDates: true });
+  let workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+    workbook = XLSX.read(buffer, { type: "array", cellDates: true, codepage: 65001 });
+  }
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+    throw new Error("Plik nie zawiera żadnych arkuszy lub ma nieobsługiwany format.");
+  }
+  return workbook;
 }
 
 function sheetToRows(workbook, sheetName) {
@@ -188,6 +240,7 @@ function sheetToRows(workbook, sheetName) {
 
 function showError(message) {
   log(`ERROR: ${message}`);
+  showInlineError(message);
   window.alert(`Ups, coś poszło nie tak.\n\n${message}`);
 }
 
@@ -207,6 +260,7 @@ function setResultSummary(lines) {
 }
 
 function setBadge(el, ok, text) {
+  if (!el) return;
   el.classList.remove("ok", "warn");
   el.classList.add(ok ? "ok" : "warn");
   el.textContent = text;
@@ -215,10 +269,30 @@ function setBadge(el, ok, text) {
 function refreshUiReadiness() {
   const hasSource = !!state.sourceWorkbook;
   const hasMaster = !!state.masterWorkbook;
+  const hasMasterP2 = !!state.masterWorkbookP2;
   const hasPdfs = (ui.payslipFiles.files || []).length > 0;
-  setBadge(ui.statusSource, hasSource, hasSource ? "OK: source file loaded" : "Brak: source file");
-  setBadge(ui.statusMaster, hasMaster, hasMaster ? "OK: master file loaded" : "Brak: master file");
-  setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak: PDF");
+  setBadge(
+    ui.statusSource,
+    hasSource,
+    hasSource
+      ? `OK: ${state.sourceWorkbookName} (${state.sourceSheets.length} ark.)`
+      : "Brak pliku source"
+  );
+  setBadge(
+    ui.statusMaster,
+    hasMaster,
+    hasMaster
+      ? `OK: ${state.masterWorkbookName} (${state.masterSheets.length} ark.)`
+      : "Brak pliku master"
+  );
+  setBadge(
+    ui.statusMasterP2,
+    hasMasterP2,
+    hasMasterP2
+      ? `OK: ${state.masterWorkbookNameP2} (${state.masterSheetsP2.length} ark.)`
+      : "Opcjonalne"
+  );
+  setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak PDF");
 
   const readyP1 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
   const p2MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
@@ -228,22 +302,16 @@ function refreshUiReadiness() {
   ui.run2.disabled = !readyP2;
 }
 
-function renderQuickHelp(tabKey) {
-  if (tabKey === "p2") {
-    ui.quickHelp.innerHTML = `
-      <strong>Szybki start (Process 2):</strong>
-      1) Wybierz master file (opcjonalnie, jeśli nie wybrany w Process 1),
-      2) Wybierz PDF-y,
-      3) Kliknij <em>Run 2</em>.
-    `;
-    return;
-  }
-  ui.quickHelp.innerHTML = `
-    <strong>Szybki start (Process 1):</strong>
-    1) Wybierz source file,
-    2) Wybierz master file,
-    3) Kliknij <em>Run 1a</em> albo <em>Run 1b</em>.
-  `;
+function showInlineError(message) {
+  if (!ui.errorBox) return;
+  ui.errorBox.textContent = message;
+  ui.errorBox.classList.remove("hidden");
+}
+
+function hideInlineError() {
+  if (!ui.errorBox) return;
+  ui.errorBox.textContent = "";
+  ui.errorBox.classList.add("hidden");
 }
 
 function escapeHtml(value) {
