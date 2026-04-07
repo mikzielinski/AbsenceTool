@@ -117,17 +117,18 @@
             Wybierz plik master
             <input id="masterFile" type="file" accept=".xlsx" />
           </label>
-          <label class="check-inline">
-            <input id="overwriteMaster" type="checkbox" checked />
-            Nadpisuj oryginalny plik master (zamiast tworzyć nowy)
-          </label>
+          <button id="masterFileFs" class="secondary" type="button">
+            Wybierz ten sam plik w trybie NADPISANIA (bez tworzenia nowego)
+          </button>
           <label>
             Wybierz arkusz master (Sep2025-Aug2026)
             <select id="masterSheet"></select>
           </label>
         </fieldset>
 
-        <p class="hint-plain">Przyciski włączą się automatycznie, kiedy dane będą gotowe.</p>
+        <p class="hint-plain">
+          Process 1a nadpisuje wskazany plik master. Nie tworzy nowego pliku master do pobrania.
+        </p>
         <div class="actions">
           <button id="run1a" class="primary" type="button">▶ Uruchom 1a (zrób Flexi + zaktualizuj master)</button>
           <button id="run1b" class="primary" type="button">▶ Uruchom 1b (porównaj salda)</button>
