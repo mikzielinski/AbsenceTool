@@ -643,48 +643,132 @@ function cloneWorkbook(wb) {
 }
 
 function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
-  const rows = sheetToRows(workbook, sheetName);
-  if (rows.length === 0) {
-    throw new Error("Master sheet jest pusty.");
+  const ws = workbook.Sheets[sheetName];
+  if (!ws || !ws["!ref"]) {
+    throw new Error("Master sheet jest pusty lub nie istnieje.");
   }
-
-  const header = Object.keys(rows[0]);
-  const monthIdx = findMonthColumnIndex(header, monthLabel);
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const monthIdx = findMonthColumnIndex(ws, range, monthLabel);
   const specialIdx = monthIdx + 1;
-  if (specialIdx >= header.length) {
+  if (specialIdx > range.e.c) {
     throw new Error(`Brak kolumny Special obok month '${monthLabel}'.`);
   }
-  const monthCol = header[monthIdx];
-  const specialCol = header[specialIdx];
 
   const bySap = new Map();
-  rows.forEach((row, idx) => {
-    const sap = normalizeSap(row[header[0]]);
-    if (sap) bySap.set(sap, idx);
-  });
+  for (let r = 0; r <= range.e.r; r += 1) {
+    const sap = normalizeSap(getWorksheetCellValue(ws, r, 0));
+    if (sap) bySap.set(sap, r);
+  }
 
   summaryRows.forEach((rec) => {
-    const idx = bySap.get(rec["SAP ID"]);
-    if (idx === undefined) {
+    const rowIdx = bySap.get(rec["SAP ID"]);
+    if (rowIdx === undefined) {
       log(`(!) SAP ${rec["SAP ID"]} not found in master - skipped.`);
       return;
     }
-    rows[idx][monthCol] = rec.Holiday ? round2(rec.Holiday) : null;
-    rows[idx][specialCol] = rec.Special ? round2(rec.Special) : null;
+    setWorksheetCellValue(ws, rowIdx, monthIdx, rec.Holiday ? round2(rec.Holiday) : null);
+    setWorksheetCellValue(ws, rowIdx, specialIdx, rec.Special ? round2(rec.Special) : null);
     log(`OK SAP ${rec["SAP ID"]}: Holiday=${round2(rec.Holiday)}, Special=${round2(rec.Special)}`);
   });
-
-  const ws = XLSX.utils.json_to_sheet(rows, { skipHeader: false });
-  workbook.Sheets[sheetName] = ws;
 }
 
-function findMonthColumnIndex(header, monthLabel) {
-  const target = String(monthLabel).trim().toLowerCase();
-  const idx = header.findIndex((name) => String(name).trim().toLowerCase() === target);
-  if (idx < 0) {
-    throw new Error(`Month '${monthLabel}' not found in master header.`);
+function findMonthColumnIndex(ws, range, monthLabel) {
+  const target = normalizeMonthLabel(monthLabel);
+  const candidates = [];
+  for (let c = 0; c <= range.e.c; c += 1) {
+    const v = getWorksheetCellValue(ws, 0, c);
+    const normalized = normalizeMonthLabel(v);
+    if (normalized) {
+      candidates.push(normalized);
+    }
+    if (normalized === target) {
+      return c;
+    }
   }
-  return idx;
+  if (target) {
+    for (let c = 0; c <= range.e.c; c += 1) {
+      const v = getWorksheetCellValue(ws, 1, c);
+      if (normalizeMonthLabel(v) === target) {
+        return c;
+      }
+    }
+  }
+  throw new Error(`Month '${monthLabel}' not found in master header. Found: ${Array.from(new Set(candidates)).join(", ")}`);
+}
+
+function getWorksheetCellValue(ws, rowIdx, colIdx) {
+  const ref = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+  const cell = ws[ref];
+  if (!cell) return null;
+  return cell.w ?? cell.v ?? null;
+}
+
+function setWorksheetCellValue(ws, rowIdx, colIdx, value) {
+  const ref = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+  const prev = ws[ref] || {};
+  if (value === null || value === undefined || value === "") {
+    ws[ref] = { ...prev, t: "z", v: undefined };
+    return;
+  }
+  ws[ref] = { ...prev, t: "n", v: Number(value) };
+}
+
+function normalizeMonthLabel(raw) {
+  if (raw === null || raw === undefined) {
+    return "";
+  }
+  const text = String(raw).trim();
+  if (!text) {
+    return "";
+  }
+  const shortMatch = text.match(/^([A-Za-z]{3})[-\s]?(\d{2}|\d{4})$/);
+  if (shortMatch) {
+    const month = shortMatch[1].slice(0, 1).toUpperCase() + shortMatch[1].slice(1, 3).toLowerCase();
+    const year = shortMatch[2].length === 2 ? shortMatch[2] : shortMatch[2].slice(-2);
+    return `${month}-${year}`.toLowerCase();
+  }
+  const date = parseMonthDate(raw);
+  if (!date) {
+    return "";
+  }
+  const month = date.toLocaleString("en-US", { month: "short" });
+  const year = String(date.getFullYear()).slice(-2);
+  return `${month}-${year}`.toLowerCase();
+}
+
+function parseMonthDate(raw) {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw) && XLSX?.SSF?.parse_date_code) {
+    const dc = XLSX.SSF.parse_date_code(raw);
+    if (dc && dc.y && dc.m) {
+      return new Date(dc.y, dc.m - 1, dc.d || 1);
+    }
+  }
+  const text = String(raw).trim();
+  const slash = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+  if (slash) {
+    const a = Number(slash[1]);
+    const b = Number(slash[2]);
+    const year = slash[3].length === 2 ? 2000 + Number(slash[3]) : Number(slash[3]);
+    const dayFirst = new Date(year, b - 1, a);
+    const monthFirst = new Date(year, a - 1, b);
+    if (dayFirst.getDate() === 1) return dayFirst;
+    if (monthFirst.getDate() === 1) return monthFirst;
+    if (a > 12) return dayFirst;
+    if (b > 12) return monthFirst;
+    return dayFirst;
+  }
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  }
+  const fallback = new Date(text);
+  if (!Number.isNaN(fallback.getTime())) {
+    return fallback;
+  }
+  return null;
 }
 
 function loadSourceBalanceSummary(rows) {
