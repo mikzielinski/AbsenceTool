@@ -1,14 +1,16 @@
 :root {
-  --bg: #f6f8fb;
+  /* QIAGEN-inspired palette from public qiagen.com styles */
+  --bg: #f4f7fb;
   --panel: #ffffff;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --primary: #155eef;
-  --primary-dark: #004eea;
+  --text: #1a1b1f;
+  --muted: #65708b;
+  --primary: #004d9f;
+  --primary-dark: #1b3067;
+  --accent: #9e002a;
   --ok: #067647;
   --warn: #b54708;
-  --danger: #b42318;
-  --border: #d0d5dd;
+  --danger: #ba1a1a;
+  --border: #d0d6df;
 }
 
 * {
@@ -17,25 +19,40 @@
 
 body {
   margin: 0;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: "Futura W01", "Futura W01 Book", "Futura W01 Medium", "Segoe UI", Arial, sans-serif;
   color: var(--text);
   background: var(--bg);
 }
 
 .topbar {
-  background: #0f172a;
+  background: #ffffff;
   color: #fff;
-  padding: 20px 28px;
+  padding: 16px 28px;
+  border-bottom: 3px solid var(--primary);
 }
 
-.topbar h1 {
-  margin: 0 0 8px;
-  font-size: 1.5rem;
+.brandbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
 }
 
-.topbar p {
+.brand-logo {
+  height: 38px;
+  width: auto;
+  object-fit: contain;
+}
+
+.brand-title h1 {
+  margin: 0 0 6px;
+  color: var(--primary);
+  letter-spacing: 0.3px;
+}
+
+.brand-title p {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--muted);
 }
 
 .layout {
@@ -47,7 +64,7 @@ body {
 .sidebar {
   border-right: 1px solid var(--border);
   padding: 20px 16px;
-  background: #eef2ff;
+  background: #ebf0f8;
 }
 
 .sidebar h2 {
@@ -69,7 +86,7 @@ body {
 
 .tool-button.active {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(21, 94, 239, 0.15);
+  box-shadow: 0 0 0 2px rgba(0, 77, 159, 0.15);
 }
 
 .tool-button:disabled {
@@ -202,6 +219,22 @@ textarea {
   border-color: var(--primary);
   background: var(--primary);
   color: #fff;
+}
+
+.notice.info {
+  background: #e5eff9;
+  border-color: #c5e1ff;
+  color: #0b3b75;
+}
+
+.status-pill.ok {
+  background: #e5f7ee;
+  color: #067647;
+}
+
+.status-pill.warn {
+  background: #fff3e0;
+  color: #b54708;
 }
 
 .form-block {
