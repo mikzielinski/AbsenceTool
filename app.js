@@ -26,6 +26,7 @@ const state = {
   sourceSheets: [],
   masterWorkbook: null,
   masterWorkbookName: "",
+  masterWorkbookBytes: null,
   masterFileHandle: null,
   masterSheets: [],
   masterWorkbookP2: null,
@@ -159,6 +160,7 @@ async function onMasterFilePicked(event) {
   if (!file) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterWorkbookBytes = null;
     state.masterFileHandle = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
@@ -167,7 +169,9 @@ async function onMasterFilePicked(event) {
     return;
   }
   try {
-    state.masterWorkbook = await readWorkbookFromFile(file);
+    const loaded = await readWorkbookBundle(file);
+    state.masterWorkbook = loaded.workbook;
+    state.masterWorkbookBytes = loaded.buffer;
     state.masterWorkbookName = file.name;
     state.masterFileHandle = null;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
@@ -179,6 +183,7 @@ async function onMasterFilePicked(event) {
   } catch (error) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterWorkbookBytes = null;
     state.masterFileHandle = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
@@ -205,7 +210,9 @@ async function onMasterFileFsPicked() {
     });
     if (!handle) return;
     const file = await handle.getFile();
-    state.masterWorkbook = await readWorkbookFromFile(file);
+    const loaded = await readWorkbookBundle(file);
+    state.masterWorkbook = loaded.workbook;
+    state.masterWorkbookBytes = loaded.buffer;
     state.masterWorkbookName = file.name;
     state.masterFileHandle = handle;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
@@ -272,8 +279,18 @@ function fillSelect(selectEl, values) {
   });
 }
 
+async function readWorkbookBundle(file) {
+  const buffer = await file.arrayBuffer();
+  const workbook = readWorkbookFromBuffer(buffer);
+  return { workbook, buffer };
+}
+
 async function readWorkbookFromFile(file) {
   const buffer = await file.arrayBuffer();
+  return readWorkbookFromBuffer(buffer);
+}
+
+function readWorkbookFromBuffer(buffer) {
   let workbook = XLSX.read(buffer, { type: "array", cellDates: true, cellStyles: true });
   let sheetNames = getWorkbookSheetNames(workbook);
 
@@ -508,14 +525,20 @@ async function runProcess1a() {
     writeWorkbookDownload(flexiWb, "Flexi-absence input.xlsx");
     log(`Flexi file generated (${flexiRows.length} row(s)).`);
 
-    updateCollectiveSheet(state.masterWorkbook, ui.masterSheet.value, balanceSummaryRows, monthLabel);
-    const saveResult = await saveMasterWorkbook(state.masterWorkbook);
-    log(`Master updated (${balanceSummaryRows.length} employee(s)).`);
+    const updatePlan = buildMasterUpdatePlan(
+      state.masterWorkbook,
+      ui.masterSheet.value,
+      balanceSummaryRows,
+      monthLabel
+    );
+    const saveResult = await saveMasterWorkbook(updatePlan);
+    applyMasterUpdatePlanToWorkbook(state.masterWorkbook, updatePlan);
+    log(`Master updated (${updatePlan.updates.length} employee(s)).`);
 
     setResultSummary([
       `Process 1a zakończony.`,
       `Flexi row(s): ${flexiRows.length}.`,
-      `Master updated row(s): ${balanceSummaryRows.length}.`,
+      `Master updated row(s): ${updatePlan.updates.length}.`,
       `Master nadpisany: ${saveResult.name}.`,
       `Pobrane pliki: Flexi-absence input.xlsx.`,
     ]);
@@ -683,7 +706,7 @@ function buildBalanceSummaryFromSource(rows) {
   return Array.from(resultMap.values());
 }
 
-function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
+function buildMasterUpdatePlan(workbook, sheetName, summaryRows, monthLabel) {
   const ws = workbook.Sheets[sheetName];
   if (!ws || !ws["!ref"]) {
     throw new Error("Master sheet jest pusty lub nie istnieje.");
@@ -699,15 +722,33 @@ function updateCollectiveSheet(workbook, sheetName, summaryRows, monthLabel) {
     if (sap) bySap.set(sap, r);
   }
 
+  const updates = [];
   summaryRows.forEach((rec) => {
     const rowIdx = bySap.get(rec["SAP ID"]);
     if (rowIdx === undefined) {
       log(`(!) SAP ${rec["SAP ID"]} not found in master - skipped.`);
       return;
     }
-    setWorksheetCellValue(ws, rowIdx, monthIdx, rec.Holiday ? round2(rec.Holiday) : null);
-    setWorksheetCellValue(ws, rowIdx, specialIdx, rec.Special ? round2(rec.Special) : null);
+    updates.push({
+      sap: rec["SAP ID"],
+      rowIdx,
+      holiday: rec.Holiday ? round2(rec.Holiday) : null,
+      special: rec.Special ? round2(rec.Special) : null,
+    });
     log(`OK SAP ${rec["SAP ID"]}: Holiday=${round2(rec.Holiday)}, Special=${round2(rec.Special)}`);
+  });
+
+  return { sheetName, monthIdx, specialIdx, updates };
+}
+
+function applyMasterUpdatePlanToWorkbook(workbook, updatePlan) {
+  const ws = workbook?.Sheets?.[updatePlan.sheetName];
+  if (!ws) {
+    return;
+  }
+  updatePlan.updates.forEach((update) => {
+    setWorksheetCellValue(ws, update.rowIdx, update.monthIdx ?? updatePlan.monthIdx, update.holiday);
+    setWorksheetCellValue(ws, update.rowIdx, update.specialIdx ?? updatePlan.specialIdx, update.special);
   });
 }
 
@@ -1134,17 +1175,27 @@ function writeWorkbookDownload(workbook, filename) {
   XLSX.writeFile(workbook, ensureXlsxName(filename));
 }
 
-async function saveMasterWorkbook(workbook) {
+async function saveMasterWorkbook(updatePlan) {
   const outputName = ensureXlsxName(state.masterWorkbookName || "master.xlsx");
-  const array = XLSX.write(workbook, {
-    bookType: "xlsx",
-    type: "array",
-    cellStyles: true,
-    cellNF: true,
-    cellDates: true,
-  });
+  if (!state.masterWorkbookBytes) {
+    throw new Error("Brak oryginalnych danych pliku master do zapisu.");
+  }
+  if (!window.XlsxPopulate) {
+    throw new Error("Brak biblioteki do bezpiecznego zapisu formatowania (XlsxPopulate).");
+  }
   if (state.masterFileHandle && supportsFsAccess()) {
+    const workbook = await window.XlsxPopulate.fromDataAsync(state.masterWorkbookBytes);
+    const sheet = workbook.sheet(updatePlan.sheetName);
+    if (!sheet) {
+      throw new Error(`Nie znaleziono arkusza '${updatePlan.sheetName}' przy zapisie mastera.`);
+    }
+    updatePlan.updates.forEach((update) => {
+      setPopulateCellNumericValue(sheet, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
+      setPopulateCellNumericValue(sheet, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
+    });
+    const array = await workbook.outputAsync({ type: "uint8array" });
     await writeArrayToHandle(state.masterFileHandle, array);
+    state.masterWorkbookBytes = array.buffer.slice(array.byteOffset, array.byteOffset + array.byteLength);
     return { mode: "overwrite", name: outputName };
   }
 
@@ -1154,6 +1205,15 @@ async function saveMasterWorkbook(workbook) {
   }
 
   throw new Error("Wybierz master przez przycisk 'tryb NADPISANIA', aby zapisać zmiany w tym samym pliku.");
+}
+
+function setPopulateCellNumericValue(sheet, rowNumber, columnNumber, value) {
+  const cell = sheet.cell(rowNumber, columnNumber);
+  if (value === null || value === undefined || value === "") {
+    cell.value(null);
+    return;
+  }
+  cell.value(Number(value));
 }
 
 async function writeArrayToHandle(handle, array) {
