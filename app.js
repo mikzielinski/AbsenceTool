@@ -26,8 +26,6 @@ const state = {
   sourceSheets: [],
   masterWorkbook: null,
   masterWorkbookName: "",
-  masterWorkbookBytes: null,
-  masterFileHandle: null,
   masterSheets: [],
   masterWorkbookP2: null,
   masterWorkbookNameP2: "",
@@ -43,14 +41,15 @@ const ui = {
   sourceFile: document.getElementById("sourceFile"),
   sourceSheet1a: document.getElementById("sourceSheet1a"),
   sourceSheet1b: document.getElementById("sourceSheet1b"),
-  masterFileFs: document.getElementById("masterFileFs"),
+  masterFile: document.getElementById("masterFile"),
   masterSheet: document.getElementById("masterSheet"),
   masterFileP2: document.getElementById("masterFileP2"),
   masterSheetP2: document.getElementById("masterSheetP2"),
   payslipFiles: document.getElementById("payslipFiles"),
-  run1a: document.getElementById("run1a"),
-  run1b: document.getElementById("run1b"),
+  run1: document.getElementById("run1"),
   run2: document.getElementById("run2"),
+  run3: document.getElementById("run3"),
+  run4: document.getElementById("run4"),
   resultSummary: document.getElementById("resultSummary"),
   logOutput: document.getElementById("logOutput"),
   statusSource: document.getElementById("sourceStatus"),
@@ -76,10 +75,7 @@ function init() {
   fillSelect(ui.masterSheet, []);
   fillSelect(ui.masterSheetP2, []);
   refreshUiReadiness();
-  log("Gotowe. Zrób kroki 1-2-3 na ekranie.");
-  if (ui.masterFileFs && !supportsFsAccess()) {
-    ui.masterFileFs.classList.add("hidden");
-  }
+  log("Gotowe. Zrób procesy 1-2-3-4 na ekranie.");
 }
 
 function fillMonthSelect() {
@@ -98,18 +94,17 @@ function bindEvents() {
   ui.tabP1.addEventListener("click", () => setActiveTab("p1"));
   ui.tabP2.addEventListener("click", () => setActiveTab("p2"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
-  if (ui.masterFileFs) {
-    ui.masterFileFs.addEventListener("click", onMasterFileFsPicked);
-  }
+  ui.masterFile.addEventListener("change", onMasterFilePicked);
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
   ui.payslipFiles.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1b.addEventListener("change", refreshUiReadiness);
   ui.masterSheet.addEventListener("change", refreshUiReadiness);
   ui.masterSheetP2.addEventListener("change", refreshUiReadiness);
-  ui.run1a.addEventListener("click", runProcess1a);
-  ui.run1b.addEventListener("click", runProcess1b);
+  ui.run1.addEventListener("click", runProcess1);
   ui.run2.addEventListener("click", runProcess2);
+  ui.run3.addEventListener("click", runProcess3);
+  ui.run4.addEventListener("click", runProcess4);
 }
 
 function setActiveTab(key) {
@@ -153,42 +148,32 @@ async function onSourceFilePicked(event) {
   }
 }
 
-async function onMasterFileFsPicked() {
-  if (!supportsFsAccess()) {
-    showError("Ta przeglądarka nie wspiera bezpośredniego nadpisywania pliku.");
+async function onMasterFilePicked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    state.masterWorkbook = null;
+    state.masterWorkbookName = "";
+    state.masterSheets = [];
+    fillSelect(ui.masterSheet, []);
+    hideInlineError();
+    refreshUiReadiness();
     return;
   }
   try {
-    const [handle] = await window.showOpenFilePicker({
-      multiple: false,
-      types: [
-        {
-          description: "Excel workbook",
-          accept: {
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-          },
-        },
-      ],
-    });
-    if (!handle) return;
-    const file = await handle.getFile();
-    const loaded = await readWorkbookBundle(file);
-    state.masterWorkbook = loaded.workbook;
-    state.masterWorkbookBytes = loaded.buffer;
+    state.masterWorkbook = await readWorkbookFromFile(file);
     state.masterWorkbookName = file.name;
-    state.masterFileHandle = handle;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
     fillSelect(ui.masterSheet, state.masterSheets);
     hideInlineError();
-    log(`Master loaded in overwrite mode: ${file.name} (${state.masterSheets.length} sheet(s)).`);
+    log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
     log(`Master sheets: ${state.masterSheets.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
-    if (error && error.name === "AbortError") {
-      log("Wybór pliku master anulowany.");
-      return;
-    }
-    showError(`Nie udało się wczytać master file (tryb nadpisania): ${error.message}`);
+    state.masterWorkbook = null;
+    state.masterWorkbookName = "";
+    state.masterSheets = [];
+    fillSelect(ui.masterSheet, []);
+    showError(`Nie udało się wczytać master file: ${error.message}`);
   }
 }
 
@@ -209,15 +194,15 @@ async function onMasterFileP2Picked(event) {
     state.masterSheetsP2 = getWorkbookSheetNames(state.masterWorkbookP2);
     fillSelect(ui.masterSheetP2, state.masterSheetsP2);
     hideInlineError();
-    log(`Master (P2) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
-    log(`Master (P2) sheets: ${state.masterSheetsP2.join(" | ")}`);
+    log(`Master (P4) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
+    log(`Master (P4) sheets: ${state.masterSheetsP2.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
     state.masterWorkbookP2 = null;
     state.masterWorkbookNameP2 = "";
     state.masterSheetsP2 = [];
     fillSelect(ui.masterSheetP2, []);
-    showError(`Nie udało się wczytać master file (P2): ${error.message}`);
+    showError(`Nie udało się wczytać master file (P4): ${error.message}`);
   }
 }
 
@@ -239,12 +224,6 @@ function fillSelect(selectEl, values) {
     option.textContent = name;
     selectEl.appendChild(option);
   });
-}
-
-async function readWorkbookBundle(file) {
-  const buffer = await file.arrayBuffer();
-  const workbook = readWorkbookFromBuffer(buffer);
-  return { workbook, buffer };
 }
 
 async function readWorkbookFromFile(file) {
@@ -349,12 +328,15 @@ function refreshUiReadiness() {
   );
   setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak PDF");
 
-  const readyP1 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
-  const p2MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
-  const readyP2 = hasPdfs && !!p2MasterReady;
-  ui.run1a.disabled = !readyP1;
-  ui.run1b.disabled = !readyP1;
-  ui.run2.disabled = !readyP2;
+  const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
+  const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
+  const readyProcess3 = hasSource && hasMaster && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
+  const p4MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
+  const readyProcess4 = hasPdfs && !!p4MasterReady;
+  ui.run1.disabled = !readyProcess1;
+  ui.run2.disabled = !readyProcess2;
+  ui.run3.disabled = !readyProcess3;
+  ui.run4.disabled = !readyProcess4;
 }
 
 function showInlineError(message) {
@@ -449,27 +431,46 @@ function nextWorkday(date) {
   return current;
 }
 
-function validateP1Inputs() {
+function validateProcess1Inputs() {
+  if (!state.sourceWorkbook) {
+    throw new Error("Wybierz Current Holiday Report.");
+  }
+  if (!ui.sourceSheet1a.value) {
+    throw new Error("Wybierz arkusz source dla Process 1.");
+  }
+}
+
+function validateProcess2Inputs() {
   if (!state.sourceWorkbook) {
     throw new Error("Wybierz Current Holiday Report.");
   }
   if (!state.masterWorkbook) {
     throw new Error("Wybierz Holiday Balance master file.");
   }
-  if (!ui.sourceSheet1a.value || !ui.sourceSheet1b.value || !ui.masterSheet.value) {
-    throw new Error("Wybierz wymagane sheety dla Process 1.");
+  if (!ui.sourceSheet1a.value || !ui.masterSheet.value) {
+    throw new Error("Wybierz wymagane sheety dla Process 2.");
   }
 }
 
-async function runProcess1a() {
+function validateProcess3Inputs() {
+  if (!state.sourceWorkbook) {
+    throw new Error("Wybierz Current Holiday Report.");
+  }
+  if (!state.masterWorkbook) {
+    throw new Error("Wybierz Holiday Balance master file.");
+  }
+  if (!ui.sourceSheet1b.value || !ui.masterSheet.value) {
+    throw new Error("Wybierz wymagane sheety dla Process 3.");
+  }
+}
+
+async function runProcess1() {
   clearLog();
   try {
-    validateP1Inputs();
-    log("=== Process 1a ===");
-    const monthLabel = ui.monthLabel.value;
+    validateProcess1Inputs();
+    log("=== Process 1 ===");
     const sourceRows = sheetToRows(state.sourceWorkbook, ui.sourceSheet1a.value);
     const flexiRows = buildFlexiAbsenceRows(sourceRows);
-    const balanceSummaryRows = buildBalanceSummaryFromSource(sourceRows);
 
     const flexiWb = buildWorkbookFromRows(
       "Flexi absence input",
@@ -485,35 +486,53 @@ async function runProcess1a() {
       flexiRows
     );
     writeWorkbookDownload(flexiWb, "Flexi-absence input.xlsx");
-    log(`Flexi file generated (${flexiRows.length} row(s)).`);
-
-    const updatePlan = buildMasterUpdatePlan(
-      state.masterWorkbook,
-      ui.masterSheet.value,
-      balanceSummaryRows,
-      monthLabel
-    );
-    const saveResult = await saveMasterWorkbook(updatePlan);
-    applyMasterUpdatePlanToWorkbook(state.masterWorkbook, updatePlan);
-    log(`Master updated (${updatePlan.updates.length} employee(s)).`);
+    log(`Flexi input generated (${flexiRows.length} row(s)).`);
 
     setResultSummary([
-      `Process 1a zakończony.`,
+      "Process 1 zakończony.",
       `Flexi row(s): ${flexiRows.length}.`,
-      `Master updated row(s): ${updatePlan.updates.length}.`,
-      `Master nadpisany: ${saveResult.name}.`,
-      `Pobrane pliki: Flexi-absence input.xlsx.`,
+      "Wynik: input do Flexi został pobrany.",
+      "Pobrany plik: Flexi-absence input.xlsx.",
     ]);
   } catch (error) {
     showError(error.message);
   }
 }
 
-async function runProcess1b() {
+async function runProcess2() {
   clearLog();
   try {
-    validateP1Inputs();
-    log("=== Process 1b ===");
+    validateProcess2Inputs();
+    log("=== Process 2 ===");
+    const monthLabel = ui.monthLabel.value;
+    const sourceRows = sheetToRows(state.sourceWorkbook, ui.sourceSheet1a.value);
+    const balanceSummaryRows = buildBalanceSummaryFromSource(sourceRows);
+    const updatePlan = buildMasterUpdatePlan(
+      state.masterWorkbook,
+      ui.masterSheet.value,
+      balanceSummaryRows,
+      monthLabel
+    );
+    applyMasterUpdatePlanToWorkbook(state.masterWorkbook, updatePlan);
+    const outName = buildUpdatedMasterName(state.masterWorkbookName, monthLabel);
+    writeWorkbookDownload(state.masterWorkbook, outName);
+    log(`Master updated (${updatePlan.updates.length} employee(s)).`);
+    setResultSummary([
+      "Process 2 zakończony.",
+      `Master updated row(s): ${updatePlan.updates.length}.`,
+      "Wynik: utworzono nowy plik master po zmianach.",
+      `Pobrany plik: ${outName}.`,
+    ]);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+async function runProcess3() {
+  clearLog();
+  try {
+    validateProcess3Inputs();
+    log("=== Process 3 ===");
     const srcSummary = loadSourceBalanceSummary(
       sheetToRows(state.sourceWorkbook, ui.sourceSheet1b.value)
     );
@@ -527,7 +546,7 @@ async function runProcess1b() {
     writeWorkbookDownload(outWb, outName);
     const mismatch = compareRows.filter((row) => row.Match !== true).length;
     setResultSummary([
-      "Process 1b zakończony.",
+      "Process 3 zakończony.",
       `Records: ${compareRows.length}.`,
       `Matched: ${compareRows.length - mismatch}.`,
       `Mismatched: ${mismatch}.`,
@@ -546,13 +565,13 @@ function resolveMasterForP2() {
   if (state.masterWorkbook && ui.masterSheet.value) {
     return { wb: state.masterWorkbook, sheet: ui.masterSheet.value };
   }
-  throw new Error("Wybierz master file/sheet dla Process 2 (lub użyj z Process 1).");
+  throw new Error("Wybierz master file/sheet dla Process 4 (lub użyj z Process 1-3).");
 }
 
-async function runProcess2() {
+async function runProcess4() {
   clearLog();
   try {
-    log("=== Process 2 ===");
+    log("=== Process 4 ===");
     const pdfFiles = Array.from(ui.payslipFiles.files || []);
     if (pdfFiles.length === 0) {
       throw new Error("Wybierz co najmniej jeden payslip PDF.");
@@ -572,7 +591,7 @@ async function runProcess2() {
     writeWorkbookDownload(outWb, outName);
     const mismatches = reconciliationRows.filter((row) => !(row.Result && row["Special result"])).length;
     setResultSummary([
-      "Process 2 zakończony.",
+      "Process 4 zakończony.",
       `Records: ${reconciliationRows.length}.`,
       `Matched: ${reconciliationRows.length - mismatches}.`,
       `Mismatched: ${mismatches}.`,
@@ -588,7 +607,7 @@ function buildFlexiAbsenceRows(rows) {
   const required = ["Project", "User", "SAP ID", "Start Date", "Days"];
   const missing = required.filter((column) => !rows.some((row) => Object.hasOwn(row, column)));
   if (missing.length > 0) {
-    throw new Error(`Brak kolumn w source sheet (1a): ${missing.join(", ")}`);
+    throw new Error(`Brak kolumn w source sheet (Process 1/2): ${missing.join(", ")}`);
   }
 
   const filtered = rows
@@ -607,7 +626,7 @@ function buildFlexiAbsenceRows(rows) {
     });
 
   if (filtered.length === 0) {
-    throw new Error("Brak pasujących rekordów 1a po filtrze project map.");
+    throw new Error("Brak pasujących rekordów Process 1/2 po filtrze project map.");
   }
 
   const grouped = [];
@@ -1137,323 +1156,18 @@ function writeWorkbookDownload(workbook, filename) {
   XLSX.writeFile(workbook, ensureXlsxName(filename));
 }
 
-async function saveMasterWorkbook(updatePlan) {
-  const outputName = ensureXlsxName(state.masterWorkbookName || "master.xlsx");
-  if (!state.masterWorkbookBytes) {
-    throw new Error("Brak oryginalnych danych pliku master do zapisu.");
+function buildUpdatedMasterName(baseName, monthLabel) {
+  const original = String(baseName || "master.xlsx");
+  const cleanMonth = String(monthLabel || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const suffix = cleanMonth ? `-${cleanMonth}` : "";
+  if (original.toLowerCase().endsWith(".xlsx")) {
+    return `${original.slice(0, -5)}-updated${suffix}.xlsx`;
   }
-  if (!window.fflate) {
-    throw new Error("Brak biblioteki do zapisu punktowego XLSX (fflate).");
-  }
-  if (state.masterFileHandle && supportsFsAccess()) {
-    const updatedBytes = applyMasterUpdatesViaWorksheetXml(state.masterWorkbookBytes, updatePlan);
-    await writeArrayToHandle(state.masterFileHandle, updatedBytes);
-    state.masterWorkbookBytes = updatedBytes.buffer.slice(
-      updatedBytes.byteOffset,
-      updatedBytes.byteOffset + updatedBytes.byteLength
-    );
-    return { mode: "overwrite", name: outputName };
-  }
-
-  // Hard requirement: never generate a new master download file.
-  if (!supportsFsAccess()) {
-    throw new Error("Ta przeglądarka nie wspiera nadpisania pliku master. Użyj Chrome/Edge i przycisku trybu NADPISANIA.");
-  }
-
-  throw new Error("Wybierz master przez przycisk 'tryb NADPISANIA', aby zapisać zmiany w tym samym pliku.");
-}
-
-function applyMasterUpdatesViaWorksheetXml(workbookBytes, updatePlan) {
-  const bytes = new Uint8Array(workbookBytes);
-  const zipped = window.fflate.unzipSync(bytes);
-  const workbookXmlPath = "xl/workbook.xml";
-  const workbookRelsXmlPath = "xl/_rels/workbook.xml.rels";
-  const workbookXml = getZipXml(zipped, workbookXmlPath);
-  const workbookRelsXml = getZipXml(zipped, workbookRelsXmlPath);
-  const sheetFilePath = resolveWorksheetPath(workbookXml, workbookRelsXml, updatePlan.sheetName);
-  const sheetXml = getZipXml(zipped, sheetFilePath);
-  const updatedSheetXml = updateWorksheetXmlValues(sheetXml, updatePlan);
-  zipped[sheetFilePath] = window.fflate.strToU8(updatedSheetXml);
-  return window.fflate.zipSync(zipped, { level: 0 });
-}
-
-function getZipXml(zipped, path) {
-  const u8 = zipped[path];
-  if (!u8) {
-    throw new Error(`Brak pliku '${path}' w archiwum XLSX.`);
-  }
-  return window.fflate.strFromU8(u8);
-}
-
-function resolveWorksheetPath(workbookXml, workbookRelsXml, sheetName) {
-  const wbDoc = new DOMParser().parseFromString(workbookXml, "application/xml");
-  const relDoc = new DOMParser().parseFromString(workbookRelsXml, "application/xml");
-  const workbookSheets = wbDoc.getElementsByTagName("sheet");
-  let relId = "";
-  for (let i = 0; i < workbookSheets.length; i += 1) {
-    const sheet = workbookSheets[i];
-    if (sheet.getAttribute("name") === sheetName) {
-      relId = sheet.getAttribute("r:id") || sheet.getAttributeNS(
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-        "id"
-      ) || "";
-      break;
-    }
-  }
-  if (!relId) {
-    throw new Error(`Nie znaleziono arkusza '${sheetName}' w workbook.xml.`);
-  }
-
-  const relNodes = relDoc.getElementsByTagName("Relationship");
-  let target = "";
-  for (let i = 0; i < relNodes.length; i += 1) {
-    const rel = relNodes[i];
-    if (rel.getAttribute("Id") === relId) {
-      target = rel.getAttribute("Target") || "";
-      break;
-    }
-  }
-  if (!target) {
-    throw new Error(`Nie znaleziono relacji arkusza '${sheetName}' (r:id=${relId}).`);
-  }
-  const clean = target.replace(/^\//, "");
-  if (clean.startsWith("xl/")) {
-    return clean;
-  }
-  return `xl/${clean.replace(/^\.?\//, "")}`;
-}
-
-function updateWorksheetXmlValues(sheetXml, updatePlan) {
-  const doc = new DOMParser().parseFromString(sheetXml, "application/xml");
-  if (doc.getElementsByTagName("parsererror").length > 0) {
-    throw new Error("Nie udało się sparsować XML arkusza master.");
-  }
-  const sheetData = findDirectChildByLocalName(doc.documentElement, "sheetData");
-  if (!sheetData) {
-    throw new Error("Arkusz XLSX nie zawiera sekcji sheetData.");
-  }
-  updatePlan.updates.forEach((update) => {
-    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
-    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
-  });
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${new XMLSerializer().serializeToString(doc)}`;
-}
-
-function setWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
-  const ref = `${columnNumberToName(columnNumber)}${rowNumber}`;
-  const rowNode = getOrCreateWorksheetRow(doc, sheetData, rowNumber);
-  const cellNode = getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber);
-  writeNumericValueToCell(doc, cellNode, value);
-}
-
-function getOrCreateWorksheetRow(doc, sheetData, rowNumber) {
-  const rows = getDirectChildrenByLocalName(sheetData, "row");
-  for (let i = 0; i < rows.length; i += 1) {
-    if (Number(rows[i].getAttribute("r") || 0) === rowNumber) {
-      return rows[i];
-    }
-  }
-  const rowNode = doc.createElementNS(sheetData.namespaceURI, "row");
-  rowNode.setAttribute("r", String(rowNumber));
-  for (let i = 0; i < rows.length; i += 1) {
-    const nextRow = rows[i];
-    if (Number(nextRow.getAttribute("r") || 0) > rowNumber) {
-      sheetData.insertBefore(rowNode, nextRow);
-      return rowNode;
-    }
-  }
-  sheetData.appendChild(rowNode);
-  return rowNode;
-}
-
-function getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber) {
-  const cells = getDirectChildrenByLocalName(rowNode, "c");
-  for (let i = 0; i < cells.length; i += 1) {
-    if ((cells[i].getAttribute("r") || "") === ref) {
-      return cells[i];
-    }
-  }
-  const cellNode = doc.createElementNS(rowNode.namespaceURI, "c");
-  cellNode.setAttribute("r", ref);
-  const inferredStyle = inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber);
-  if (inferredStyle) {
-    cellNode.setAttribute("s", inferredStyle);
-  }
-  for (let i = 0; i < cells.length; i += 1) {
-    const current = cells[i];
-    if (compareCellRefs(current.getAttribute("r") || "", ref) > 0) {
-      rowNode.insertBefore(cellNode, current);
-      return cellNode;
-    }
-  }
-  rowNode.appendChild(cellNode);
-  return cellNode;
-}
-
-function inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber) {
-  const fromRow = inferStyleIdFromRow(rowNode, columnNumber);
-  if (fromRow) {
-    return fromRow;
-  }
-  return inferStyleIdFromColumn(sheetData, rowNumber, columnNumber);
-}
-
-function inferStyleIdFromRow(rowNode, columnNumber) {
-  const cells = getDirectChildrenByLocalName(rowNode, "c");
-  let bestStyle = "";
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < cells.length; i += 1) {
-    const cell = cells[i];
-    const style = cell.getAttribute("s") || "";
-    if (!style) continue;
-    const ref = cell.getAttribute("r") || "";
-    const col = cellRefToPos(ref).col;
-    if (!col) continue;
-    const distance = Math.abs(col - columnNumber);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestStyle = style;
-    }
-  }
-  return bestStyle;
-}
-
-function inferStyleIdFromColumn(sheetData, rowNumber, columnNumber) {
-  const rows = getDirectChildrenByLocalName(sheetData, "row");
-  const colName = columnNumberToName(columnNumber);
-  let bestStyle = "";
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i];
-    const r = Number(row.getAttribute("r") || 0);
-    if (!r) continue;
-    const cell = findCellNodeByRef(row, `${colName}${r}`);
-    if (!cell) continue;
-    const style = cell.getAttribute("s") || "";
-    if (!style) continue;
-    const distance = Math.abs(r - rowNumber);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestStyle = style;
-      if (distance === 0) {
-        break;
-      }
-    }
-  }
-  return bestStyle;
-}
-
-function writeNumericValueToCell(doc, cellNode, value) {
-  const hasFormula = Boolean(findDirectChildByLocalName(cellNode, "f"));
-  if (value === null || value === undefined || value === "") {
-    if (hasFormula) {
-      const v = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
-      v.textContent = "";
-      return;
-    }
-    removeDirectChildrenByLocalName(cellNode, "v");
-    removeDirectChildrenByLocalName(cellNode, "is");
-    cellNode.removeAttribute("t");
-    return;
-  }
-
-  const numericText = String(Number(value));
-  cellNode.removeAttribute("t");
-  removeDirectChildrenByLocalName(cellNode, "is");
-  const valueNode = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
-  valueNode.textContent = numericText;
-}
-
-function getDirectChildrenByLocalName(parentNode, localName) {
-  const result = [];
-  const children = parentNode?.childNodes || [];
-  for (let i = 0; i < children.length; i += 1) {
-    const child = children[i];
-    if (child.nodeType === 1 && child.localName === localName) {
-      result.push(child);
-    }
-  }
-  return result;
-}
-
-function findDirectChildByLocalName(parentNode, localName) {
-  const children = parentNode?.childNodes || [];
-  for (let i = 0; i < children.length; i += 1) {
-    const child = children[i];
-    if (child.nodeType === 1 && child.localName === localName) {
-      return child;
-    }
-  }
-  return null;
-}
-
-function findCellNodeByRef(rowNode, ref) {
-  const cells = getDirectChildrenByLocalName(rowNode, "c");
-  for (let i = 0; i < cells.length; i += 1) {
-    if ((cells[i].getAttribute("r") || "") === ref) {
-      return cells[i];
-    }
-  }
-  return null;
-}
-
-function getOrCreateDirectChildByLocalName(doc, parentNode, localName) {
-  const existing = findDirectChildByLocalName(parentNode, localName);
-  if (existing) {
-    return existing;
-  }
-  const created = doc.createElementNS(parentNode.namespaceURI, localName);
-  parentNode.appendChild(created);
-  return created;
-}
-
-function removeDirectChildrenByLocalName(parentNode, localName) {
-  const children = [...(parentNode?.childNodes || [])];
-  children.forEach((child) => {
-    if (child.nodeType === 1 && child.localName === localName) {
-      parentNode.removeChild(child);
-    }
-  });
-}
-
-function columnNumberToName(columnNumber) {
-  let n = Number(columnNumber);
-  let name = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    name = String.fromCharCode(65 + rem) + name;
-    n = Math.floor((n - 1) / 26);
-  }
-  return name || "A";
-}
-
-function cellRefToPos(ref) {
-  const match = String(ref || "").match(/^([A-Z]+)(\d+)$/);
-  if (!match) return { col: 0, row: 0 };
-  const letters = match[1];
-  const row = Number(match[2]);
-  let col = 0;
-  for (let i = 0; i < letters.length; i += 1) {
-    col = col * 26 + (letters.charCodeAt(i) - 64);
-  }
-  return { col, row };
-}
-
-function compareCellRefs(a, b) {
-  const pa = cellRefToPos(a);
-  const pb = cellRefToPos(b);
-  if (pa.row !== pb.row) return pa.row - pb.row;
-  return pa.col - pb.col;
-}
-
-async function writeArrayToHandle(handle, array) {
-  const writable = await handle.createWritable();
-  await writable.write(array);
-  await writable.close();
-}
-
-function supportsFsAccess() {
-  return Boolean(window.isSecureContext && window.showSaveFilePicker && window.showOpenFilePicker);
+  return `${original}-updated${suffix}.xlsx`;
 }
 
 function ensureXlsxName(name) {

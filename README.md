@@ -6,9 +6,10 @@ Statyczna platforma webowa do obsługi procesów payroll.
 
 Wersja webowa narzędzia z procesami:
 
-- **Process 1a** - Build "Flexi-absence input" from Current Holiday Report
-- **Process 1b** - Compare Holiday Balance tab in Current Report vs master file
-- **Process 2** - Compare master file totals vs payslip PDFs
+- **Process 1** - Stworzenie inputu do Flexi z Current Holiday Report
+- **Process 2** - Update master file i utworzenie nowego pliku do pobrania
+- **Process 3** - Porównanie sald między source a masterem
+- **Process 4** - Porównanie mastera z payslip PDF
 
 ### Co ważne
 
@@ -22,7 +23,7 @@ Wersja webowa narzędzia z procesami:
 2. Załaduj pliki przez UI:
    - source report (`.xlsx/.xls`),
    - master file (`.xlsx`),
-   - payslip PDFs (`.pdf`) dla Process 2.
+   - payslip PDFs (`.pdf`) dla Process 4.
 3. Kliknij odpowiedni przycisk Run.
 4. Raporty są pobierane jako pliki `.xlsx` przez przeglądarkę.
 
