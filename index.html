@@ -31,7 +31,7 @@
         <h2>Holiday Balance Tool</h2>
         <p>
           Prosty tryb pracy krok po kroku:
-          najpierw wybierasz pliki, potem klikasz jeden przycisk.
+          najpierw wybierasz pliki, potem uruchamiasz wybrany proces.
         </p>
 
         <div class="shared-row">
@@ -45,9 +45,10 @@
         </div>
 
         <div class="step-list">
-          <div class="step-item"><strong>Krok 1:</strong> Wybierz plik source i master.</div>
-          <div class="step-item"><strong>Krok 2:</strong> Wybierz odpowiednie arkusze (sheet).</div>
-          <div class="step-item"><strong>Krok 3:</strong> Kliknij przycisk Run.</div>
+          <div class="step-item"><strong>Process 1:</strong> Stworzenie inputu do Flexi.</div>
+          <div class="step-item"><strong>Process 2:</strong> Update master file i pobranie nowego pliku.</div>
+          <div class="step-item"><strong>Process 3:</strong> Porównanie sald source vs master.</div>
+          <div class="step-item"><strong>Process 4:</strong> Porównanie mastera z payslipami.</div>
         </div>
 
         <div class="status-grid">
@@ -56,11 +57,11 @@
             <span id="sourceStatus" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
-            <span class="status-label">Master Excel (P1)</span>
+            <span class="status-label">Master Excel (P1-3)</span>
             <span id="masterStatus" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
-            <span class="status-label">Master Excel (P2)</span>
+            <span class="status-label">Master Excel (P4)</span>
             <span id="masterP2Status" class="status-pill warn">Opcjonalne</span>
           </div>
           <div class="status-card">
@@ -71,16 +72,16 @@
 
         <div class="tab-buttons">
           <button id="tabP1" class="tab-button active" type="button">
-            Process 1 (1a + 1b)
+            Process 1-3
           </button>
           <button id="tabP2" class="tab-button" type="button">
-            Process 2
+            Process 4
           </button>
         </div>
       </article>
 
       <article id="panelP1" class="panel">
-        <h3>Process 1a / 1b</h3>
+        <h3>Process 1 / 2 / 3</h3>
         <div id="errorBox" class="notice error hidden"></div>
 
         <fieldset class="form-block">
@@ -91,11 +92,11 @@
           </label>
           <div class="form-grid">
             <label>
-              Wybierz arkusz dla 1a (absence data)
+              Wybierz arkusz dla Process 1 (absence data)
               <select id="sourceSheet1a"></select>
             </label>
             <label>
-              Wybierz arkusz dla 1b (Holiday Balance)
+              Wybierz arkusz dla Process 3 (Holiday Balance)
               <select id="sourceSheet1b"></select>
             </label>
           </div>
@@ -103,9 +104,10 @@
 
         <fieldset class="form-block">
           <legend>2) "Holiday Balance" master file (.xlsx)</legend>
-          <button id="masterFileFs" class="primary" type="button">
-            Choose file
-          </button>
+          <label>
+            Wybierz plik master
+            <input id="masterFile" type="file" accept=".xlsx" />
+          </label>
           <label>
             Wybierz arkusz master (Sep2025-Aug2026)
             <select id="masterSheet"></select>
@@ -113,25 +115,26 @@
         </fieldset>
 
         <p class="hint-plain">
-          Process 1a nadpisuje wskazany plik master. Nie tworzy nowego pliku master do pobrania.
+          Process 2 tworzy nowy plik master po zmianach (download) i nie nadpisuje oryginału.
         </p>
         <div class="actions">
-          <button id="run1a" class="primary" type="button">▶ Uruchom 1a (zrób Flexi + zaktualizuj master)</button>
-          <button id="run1b" class="primary" type="button">▶ Uruchom 1b (porównaj salda)</button>
+          <button id="run1" class="primary" type="button">▶ Uruchom Process 1 (stwórz input do Flexi)</button>
+          <button id="run2" class="primary" type="button">▶ Uruchom Process 2 (update master + nowy plik)</button>
+          <button id="run3" class="primary" type="button">▶ Uruchom Process 3 (porównaj salda)</button>
         </div>
       </article>
 
       <article id="panelP2" class="panel hidden">
-        <h3>Process 2</h3>
+        <h3>Process 4</h3>
 
         <fieldset class="form-block">
-          <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1)</legend>
+          <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1-3)</legend>
           <label>
-            Wybierz plik master dla Process 2
+            Wybierz plik master dla Process 4
             <input id="masterFileP2" type="file" accept=".xlsx" />
           </label>
           <label>
-            Wybierz arkusz dla Process 2
+            Wybierz arkusz dla Process 4
             <select id="masterSheetP2"></select>
           </label>
         </fieldset>
@@ -145,7 +148,7 @@
         </fieldset>
 
         <div class="actions">
-          <button id="run2" class="primary" type="button">▶ Uruchom 2 (porównaj z payslip)</button>
+          <button id="run4" class="primary" type="button">▶ Uruchom Process 4 (porównaj z payslip)</button>
         </div>
       </article>
 
@@ -162,7 +165,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="./app.js"></script>
 </body>
