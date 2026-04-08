@@ -1224,76 +1224,196 @@ function resolveWorksheetPath(workbookXml, workbookRelsXml, sheetName) {
 }
 
 function updateWorksheetXmlValues(sheetXml, updatePlan) {
-  let updatedXml = sheetXml;
+  const doc = new DOMParser().parseFromString(sheetXml, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length > 0) {
+    throw new Error("Nie udało się sparsować XML arkusza master.");
+  }
+  const sheetData = findDirectChildByLocalName(doc.documentElement, "sheetData");
+  if (!sheetData) {
+    throw new Error("Arkusz XLSX nie zawiera sekcji sheetData.");
+  }
   updatePlan.updates.forEach((update) => {
-    updatedXml = updateWorksheetXmlCellByRef(
-      updatedXml,
-      `${columnNumberToName(updatePlan.monthIdx + 1)}${update.rowIdx + 1}`,
-      update.holiday
-    );
-    updatedXml = updateWorksheetXmlCellByRef(
-      updatedXml,
-      `${columnNumberToName(updatePlan.specialIdx + 1)}${update.rowIdx + 1}`,
-      update.special
-    );
+    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
+    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
   });
-  return updatedXml;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${new XMLSerializer().serializeToString(doc)}`;
 }
 
-function updateWorksheetXmlCellByRef(sheetXml, ref, value) {
-  const escapedRef = escapeRegex(ref);
-  const pattern = new RegExp(`<c\\b[^>]*\\br="${escapedRef}"[^>]*>[\\s\\S]*?<\\/c>`);
-  const match = sheetXml.match(pattern);
-  if (!match) {
-    return sheetXml;
-  }
-  const originalCell = match[0];
-  const updatedCell = rewriteCellXmlValue(originalCell, value);
-  if (updatedCell === originalCell) {
-    return sheetXml;
-  }
-  return sheetXml.replace(originalCell, updatedCell);
+function setWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
+  const ref = `${columnNumberToName(columnNumber)}${rowNumber}`;
+  const rowNode = getOrCreateWorksheetRow(doc, sheetData, rowNumber);
+  const cellNode = getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber);
+  writeNumericValueToCell(doc, cellNode, value);
 }
 
-function rewriteCellXmlValue(cellXml, value) {
-  const openTagMatch = cellXml.match(/^<c\b[^>]*>/);
-  const closeTag = "</c>";
-  if (!openTagMatch || !cellXml.endsWith(closeTag)) {
-    return cellXml;
+function getOrCreateWorksheetRow(doc, sheetData, rowNumber) {
+  const rows = getDirectChildrenByLocalName(sheetData, "row");
+  for (let i = 0; i < rows.length; i += 1) {
+    if (Number(rows[i].getAttribute("r") || 0) === rowNumber) {
+      return rows[i];
+    }
   }
-  let openTag = openTagMatch[0];
-  let inner = cellXml.slice(openTag.length, -closeTag.length);
-  const hasFormula = /<f[\s>][\s\S]*?<\/f>/.test(inner);
+  const rowNode = doc.createElementNS(sheetData.namespaceURI, "row");
+  rowNode.setAttribute("r", String(rowNumber));
+  for (let i = 0; i < rows.length; i += 1) {
+    const nextRow = rows[i];
+    if (Number(nextRow.getAttribute("r") || 0) > rowNumber) {
+      sheetData.insertBefore(rowNode, nextRow);
+      return rowNode;
+    }
+  }
+  sheetData.appendChild(rowNode);
+  return rowNode;
+}
 
+function getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  for (let i = 0; i < cells.length; i += 1) {
+    if ((cells[i].getAttribute("r") || "") === ref) {
+      return cells[i];
+    }
+  }
+  const cellNode = doc.createElementNS(rowNode.namespaceURI, "c");
+  cellNode.setAttribute("r", ref);
+  const inferredStyle = inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber);
+  if (inferredStyle) {
+    cellNode.setAttribute("s", inferredStyle);
+  }
+  for (let i = 0; i < cells.length; i += 1) {
+    const current = cells[i];
+    if (compareCellRefs(current.getAttribute("r") || "", ref) > 0) {
+      rowNode.insertBefore(cellNode, current);
+      return cellNode;
+    }
+  }
+  rowNode.appendChild(cellNode);
+  return cellNode;
+}
+
+function inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber) {
+  const fromRow = inferStyleIdFromRow(rowNode, columnNumber);
+  if (fromRow) {
+    return fromRow;
+  }
+  return inferStyleIdFromColumn(sheetData, rowNumber, columnNumber);
+}
+
+function inferStyleIdFromRow(rowNode, columnNumber) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  let bestStyle = "";
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < cells.length; i += 1) {
+    const cell = cells[i];
+    const style = cell.getAttribute("s") || "";
+    if (!style) continue;
+    const ref = cell.getAttribute("r") || "";
+    const col = cellRefToPos(ref).col;
+    if (!col) continue;
+    const distance = Math.abs(col - columnNumber);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStyle = style;
+    }
+  }
+  return bestStyle;
+}
+
+function inferStyleIdFromColumn(sheetData, rowNumber, columnNumber) {
+  const rows = getDirectChildrenByLocalName(sheetData, "row");
+  const colName = columnNumberToName(columnNumber);
+  let bestStyle = "";
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    const r = Number(row.getAttribute("r") || 0);
+    if (!r) continue;
+    const cell = findCellNodeByRef(row, `${colName}${r}`);
+    if (!cell) continue;
+    const style = cell.getAttribute("s") || "";
+    if (!style) continue;
+    const distance = Math.abs(r - rowNumber);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStyle = style;
+      if (distance === 0) {
+        break;
+      }
+    }
+  }
+  return bestStyle;
+}
+
+function writeNumericValueToCell(doc, cellNode, value) {
+  const hasFormula = Boolean(findDirectChildByLocalName(cellNode, "f"));
   if (value === null || value === undefined || value === "") {
     if (hasFormula) {
-      if (/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(inner)) {
-        inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/, "<v></v>");
-      } else {
-        inner += "<v></v>";
-      }
-      return `${openTag}${inner}${closeTag}`;
+      const v = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
+      v.textContent = "";
+      return;
     }
-    inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/g, "");
-    inner = inner.replace(/<is[\s\S]*?<\/is>/g, "");
-    return `${openTag}${inner}${closeTag}`;
+    removeDirectChildrenByLocalName(cellNode, "v");
+    removeDirectChildrenByLocalName(cellNode, "is");
+    cellNode.removeAttribute("t");
+    return;
   }
 
   const numericText = String(Number(value));
-  openTag = openTag.replace(/\s+t="[^"]*"/g, "");
-  inner = inner.replace(/<is[\s\S]*?<\/is>/g, "");
-  if (/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(inner)) {
-    inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/, `<v>${numericText}</v>`);
-  } else if (hasFormula) {
-    inner = inner.replace(/(<f[\s\S]*?<\/f>)/, `$1<v>${numericText}</v>`);
-  } else {
-    inner += `<v>${numericText}</v>`;
-  }
-  return `${openTag}${inner}${closeTag}`;
+  cellNode.removeAttribute("t");
+  removeDirectChildrenByLocalName(cellNode, "is");
+  const valueNode = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
+  valueNode.textContent = numericText;
 }
 
-function escapeRegex(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function getDirectChildrenByLocalName(parentNode, localName) {
+  const result = [];
+  const children = parentNode?.childNodes || [];
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i];
+    if (child.nodeType === 1 && child.localName === localName) {
+      result.push(child);
+    }
+  }
+  return result;
+}
+
+function findDirectChildByLocalName(parentNode, localName) {
+  const children = parentNode?.childNodes || [];
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i];
+    if (child.nodeType === 1 && child.localName === localName) {
+      return child;
+    }
+  }
+  return null;
+}
+
+function findCellNodeByRef(rowNode, ref) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  for (let i = 0; i < cells.length; i += 1) {
+    if ((cells[i].getAttribute("r") || "") === ref) {
+      return cells[i];
+    }
+  }
+  return null;
+}
+
+function getOrCreateDirectChildByLocalName(doc, parentNode, localName) {
+  const existing = findDirectChildByLocalName(parentNode, localName);
+  if (existing) {
+    return existing;
+  }
+  const created = doc.createElementNS(parentNode.namespaceURI, localName);
+  parentNode.appendChild(created);
+  return created;
+}
+
+function removeDirectChildrenByLocalName(parentNode, localName) {
+  const children = [...(parentNode?.childNodes || [])];
+  children.forEach((child) => {
+    if (child.nodeType === 1 && child.localName === localName) {
+      parentNode.removeChild(child);
+    }
+  });
 }
 
 function columnNumberToName(columnNumber) {
