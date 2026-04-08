@@ -72,16 +72,19 @@
 
         <div class="tab-buttons">
           <button id="tabP1" class="tab-button active" type="button">
-            Process 1-3
+            Process 1-2
           </button>
           <button id="tabP2" class="tab-button" type="button">
+            Process 3
+          </button>
+          <button id="tabP3" class="tab-button" type="button">
             Process 4
           </button>
         </div>
       </article>
 
       <article id="panelP1" class="panel">
-        <h3>Process 1 / 2 / 3</h3>
+        <h3>Process 1 / 2</h3>
         <div id="errorBox" class="notice error hidden"></div>
 
         <fieldset class="form-block">
@@ -90,16 +93,10 @@
             Wybierz plik source
             <input id="sourceFile" type="file" accept=".xlsx,.xls" />
           </label>
-          <div class="form-grid">
-            <label>
-              Wybierz arkusz dla Process 1 (absence data)
-              <select id="sourceSheet1a"></select>
-            </label>
-            <label>
-              Wybierz arkusz dla Process 3 (Holiday Balance)
-              <select id="sourceSheet1b"></select>
-            </label>
-          </div>
+          <label>
+            Wybierz arkusz dla Process 1 (absence data)
+            <select id="sourceSheet1a"></select>
+          </label>
         </fieldset>
 
         <fieldset class="form-block">
@@ -120,11 +117,29 @@
         <div class="actions">
           <button id="run1" class="primary" type="button">▶ Uruchom Process 1 (stwórz input do Flexi)</button>
           <button id="run2" class="primary" type="button">▶ Uruchom Process 2 (update master + nowy plik)</button>
-          <button id="run3" class="primary" type="button">▶ Uruchom Process 3 (porównaj salda)</button>
         </div>
       </article>
 
       <article id="panelP2" class="panel hidden">
+        <h3>Process 3</h3>
+
+        <fieldset class="form-block">
+          <legend>Wymagane dane dla Process 3</legend>
+          <label>
+            Wybierz arkusz source dla Process 3 (Holiday Balance)
+            <select id="sourceSheet1b"></select>
+          </label>
+          <p class="hint-plain">
+            Process 3 używa pliku source, pliku master i arkusza master wybranych w zakładce Process 1-2.
+          </p>
+        </fieldset>
+
+        <div class="actions">
+          <button id="run3" class="primary" type="button">▶ Uruchom Process 3 (porównaj salda)</button>
+        </div>
+      </article>
+
+      <article id="panelP3" class="panel hidden">
         <h3>Process 4</h3>
 
         <fieldset class="form-block">

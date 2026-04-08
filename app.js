@@ -34,10 +34,12 @@ const state = {
 
 const ui = {
   monthLabel: document.getElementById("monthLabel"),
-  tabP1: document.getElementById("tabP1"),
-  tabP2: document.getElementById("tabP2"),
-  panelP1: document.getElementById("panelP1"),
-  panelP2: document.getElementById("panelP2"),
+  tabP12: document.getElementById("tabP12"),
+  tabP3: document.getElementById("tabP3"),
+  tabP4: document.getElementById("tabP4"),
+  panelP12: document.getElementById("panelP12"),
+  panelP3: document.getElementById("panelP3"),
+  panelP4: document.getElementById("panelP4"),
   sourceFile: document.getElementById("sourceFile"),
   sourceSheet1a: document.getElementById("sourceSheet1a"),
   sourceSheet1b: document.getElementById("sourceSheet1b"),
@@ -68,7 +70,7 @@ function init() {
   }
 
   fillMonthSelect();
-  setActiveTab("p1");
+  setActiveTab("p12");
   bindEvents();
   fillSelect(ui.sourceSheet1a, []);
   fillSelect(ui.sourceSheet1b, []);
@@ -91,8 +93,9 @@ function fillMonthSelect() {
 }
 
 function bindEvents() {
-  ui.tabP1.addEventListener("click", () => setActiveTab("p1"));
-  ui.tabP2.addEventListener("click", () => setActiveTab("p2"));
+  ui.tabP12.addEventListener("click", () => setActiveTab("p12"));
+  ui.tabP3.addEventListener("click", () => setActiveTab("p3"));
+  ui.tabP4.addEventListener("click", () => setActiveTab("p4"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
   ui.masterFile.addEventListener("change", onMasterFilePicked);
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
@@ -108,11 +111,15 @@ function bindEvents() {
 }
 
 function setActiveTab(key) {
-  const onP1 = key === "p1";
-  ui.tabP1.classList.toggle("active", onP1);
-  ui.tabP2.classList.toggle("active", !onP1);
-  ui.panelP1.classList.toggle("hidden", !onP1);
-  ui.panelP2.classList.toggle("hidden", onP1);
+  const onP12 = key === "p12";
+  const onP3 = key === "p3";
+  const onP4 = key === "p4";
+  ui.tabP12.classList.toggle("active", onP12);
+  ui.tabP3.classList.toggle("active", onP3);
+  ui.tabP4.classList.toggle("active", onP4);
+  ui.panelP12.classList.toggle("hidden", !onP12);
+  ui.panelP3.classList.toggle("hidden", !onP3);
+  ui.panelP4.classList.toggle("hidden", !onP4);
   refreshUiReadiness();
 }
 
