@@ -1180,22 +1180,16 @@ async function saveMasterWorkbook(updatePlan) {
   if (!state.masterWorkbookBytes) {
     throw new Error("Brak oryginalnych danych pliku master do zapisu.");
   }
-  if (!window.XlsxPopulate) {
-    throw new Error("Brak biblioteki do bezpiecznego zapisu formatowania (XlsxPopulate).");
+  if (!window.fflate) {
+    throw new Error("Brak biblioteki do zapisu punktowego XLSX (fflate).");
   }
   if (state.masterFileHandle && supportsFsAccess()) {
-    const workbook = await window.XlsxPopulate.fromDataAsync(state.masterWorkbookBytes);
-    const sheet = workbook.sheet(updatePlan.sheetName);
-    if (!sheet) {
-      throw new Error(`Nie znaleziono arkusza '${updatePlan.sheetName}' przy zapisie mastera.`);
-    }
-    updatePlan.updates.forEach((update) => {
-      setPopulateCellNumericValue(sheet, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
-      setPopulateCellNumericValue(sheet, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
-    });
-    const array = await workbook.outputAsync({ type: "uint8array" });
-    await writeArrayToHandle(state.masterFileHandle, array);
-    state.masterWorkbookBytes = array.buffer.slice(array.byteOffset, array.byteOffset + array.byteLength);
+    const updatedBytes = applyMasterUpdatesViaWorksheetXml(state.masterWorkbookBytes, updatePlan);
+    await writeArrayToHandle(state.masterFileHandle, updatedBytes);
+    state.masterWorkbookBytes = updatedBytes.buffer.slice(
+      updatedBytes.byteOffset,
+      updatedBytes.byteOffset + updatedBytes.byteLength
+    );
     return { mode: "overwrite", name: outputName };
   }
 
@@ -1207,13 +1201,167 @@ async function saveMasterWorkbook(updatePlan) {
   throw new Error("Wybierz master przez przycisk 'tryb NADPISANIA', aby zapisać zmiany w tym samym pliku.");
 }
 
-function setPopulateCellNumericValue(sheet, rowNumber, columnNumber, value) {
-  const cell = sheet.cell(rowNumber, columnNumber);
-  if (value === null || value === undefined || value === "") {
-    cell.value(null);
-    return;
+function applyMasterUpdatesViaWorksheetXml(workbookBytes, updatePlan) {
+  const bytes = new Uint8Array(workbookBytes);
+  const zipped = window.fflate.unzipSync(bytes);
+  const workbookXmlPath = "xl/workbook.xml";
+  const workbookRelsXmlPath = "xl/_rels/workbook.xml.rels";
+  const workbookXml = getZipXml(zipped, workbookXmlPath);
+  const workbookRelsXml = getZipXml(zipped, workbookRelsXmlPath);
+  const sheetFilePath = resolveWorksheetPath(workbookXml, workbookRelsXml, updatePlan.sheetName);
+  const sheetXml = getZipXml(zipped, sheetFilePath);
+  const updatedSheetXml = updateWorksheetXmlValues(sheetXml, updatePlan);
+  zipped[sheetFilePath] = window.fflate.strToU8(updatedSheetXml);
+  return window.fflate.zipSync(zipped, { level: 0 });
+}
+
+function getZipXml(zipped, path) {
+  const u8 = zipped[path];
+  if (!u8) {
+    throw new Error(`Brak pliku '${path}' w archiwum XLSX.`);
   }
-  cell.value(Number(value));
+  return window.fflate.strFromU8(u8);
+}
+
+function resolveWorksheetPath(workbookXml, workbookRelsXml, sheetName) {
+  const wbDoc = new DOMParser().parseFromString(workbookXml, "application/xml");
+  const relDoc = new DOMParser().parseFromString(workbookRelsXml, "application/xml");
+  const workbookSheets = wbDoc.getElementsByTagName("sheet");
+  let relId = "";
+  for (let i = 0; i < workbookSheets.length; i += 1) {
+    const sheet = workbookSheets[i];
+    if (sheet.getAttribute("name") === sheetName) {
+      relId = sheet.getAttribute("r:id") || sheet.getAttributeNS(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "id"
+      ) || "";
+      break;
+    }
+  }
+  if (!relId) {
+    throw new Error(`Nie znaleziono arkusza '${sheetName}' w workbook.xml.`);
+  }
+
+  const relNodes = relDoc.getElementsByTagName("Relationship");
+  let target = "";
+  for (let i = 0; i < relNodes.length; i += 1) {
+    const rel = relNodes[i];
+    if (rel.getAttribute("Id") === relId) {
+      target = rel.getAttribute("Target") || "";
+      break;
+    }
+  }
+  if (!target) {
+    throw new Error(`Nie znaleziono relacji arkusza '${sheetName}' (r:id=${relId}).`);
+  }
+  const clean = target.replace(/^\//, "");
+  if (clean.startsWith("xl/")) {
+    return clean;
+  }
+  return `xl/${clean.replace(/^\.?\//, "")}`;
+}
+
+function updateWorksheetXmlValues(sheetXml, updatePlan) {
+  let updatedXml = sheetXml;
+  updatePlan.updates.forEach((update) => {
+    updatedXml = updateWorksheetXmlCellByRef(
+      updatedXml,
+      `${columnNumberToName(updatePlan.monthIdx + 1)}${update.rowIdx + 1}`,
+      update.holiday
+    );
+    updatedXml = updateWorksheetXmlCellByRef(
+      updatedXml,
+      `${columnNumberToName(updatePlan.specialIdx + 1)}${update.rowIdx + 1}`,
+      update.special
+    );
+  });
+  return updatedXml;
+}
+
+function updateWorksheetXmlCellByRef(sheetXml, ref, value) {
+  const escapedRef = escapeRegex(ref);
+  const pattern = new RegExp(`<c\\b[^>]*\\br="${escapedRef}"[^>]*>[\\s\\S]*?<\\/c>`);
+  const match = sheetXml.match(pattern);
+  if (!match) {
+    return sheetXml;
+  }
+  const originalCell = match[0];
+  const updatedCell = rewriteCellXmlValue(originalCell, value);
+  if (updatedCell === originalCell) {
+    return sheetXml;
+  }
+  return sheetXml.replace(originalCell, updatedCell);
+}
+
+function rewriteCellXmlValue(cellXml, value) {
+  const openTagMatch = cellXml.match(/^<c\b[^>]*>/);
+  const closeTag = "</c>";
+  if (!openTagMatch || !cellXml.endsWith(closeTag)) {
+    return cellXml;
+  }
+  let openTag = openTagMatch[0];
+  let inner = cellXml.slice(openTag.length, -closeTag.length);
+  const hasFormula = /<f[\s>][\s\S]*?<\/f>/.test(inner);
+
+  if (value === null || value === undefined || value === "") {
+    if (hasFormula) {
+      if (/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(inner)) {
+        inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/, "<v></v>");
+      } else {
+        inner += "<v></v>";
+      }
+      return `${openTag}${inner}${closeTag}`;
+    }
+    inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/g, "");
+    inner = inner.replace(/<is[\s\S]*?<\/is>/g, "");
+    return `${openTag}${inner}${closeTag}`;
+  }
+
+  const numericText = String(Number(value));
+  openTag = openTag.replace(/\s+t="[^"]*"/g, "");
+  inner = inner.replace(/<is[\s\S]*?<\/is>/g, "");
+  if (/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(inner)) {
+    inner = inner.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/, `<v>${numericText}</v>`);
+  } else if (hasFormula) {
+    inner = inner.replace(/(<f[\s\S]*?<\/f>)/, `$1<v>${numericText}</v>`);
+  } else {
+    inner += `<v>${numericText}</v>`;
+  }
+  return `${openTag}${inner}${closeTag}`;
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function columnNumberToName(columnNumber) {
+  let n = Number(columnNumber);
+  let name = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    name = String.fromCharCode(65 + rem) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name || "A";
+}
+
+function cellRefToPos(ref) {
+  const match = String(ref || "").match(/^([A-Z]+)(\d+)$/);
+  if (!match) return { col: 0, row: 0 };
+  const letters = match[1];
+  const row = Number(match[2]);
+  let col = 0;
+  for (let i = 0; i < letters.length; i += 1) {
+    col = col * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return { col, row };
+}
+
+function compareCellRefs(a, b) {
+  const pa = cellRefToPos(a);
+  const pb = cellRefToPos(b);
+  if (pa.row !== pb.row) return pa.row - pb.row;
+  return pa.col - pb.col;
 }
 
 async function writeArrayToHandle(handle, array) {
