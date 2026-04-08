@@ -43,7 +43,6 @@ const ui = {
   sourceFile: document.getElementById("sourceFile"),
   sourceSheet1a: document.getElementById("sourceSheet1a"),
   sourceSheet1b: document.getElementById("sourceSheet1b"),
-  masterFile: document.getElementById("masterFile"),
   masterFileFs: document.getElementById("masterFileFs"),
   masterSheet: document.getElementById("masterSheet"),
   masterFileP2: document.getElementById("masterFileP2"),
@@ -99,7 +98,6 @@ function bindEvents() {
   ui.tabP1.addEventListener("click", () => setActiveTab("p1"));
   ui.tabP2.addEventListener("click", () => setActiveTab("p2"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
-  ui.masterFile.addEventListener("change", onMasterFilePicked);
   if (ui.masterFileFs) {
     ui.masterFileFs.addEventListener("click", onMasterFileFsPicked);
   }
@@ -152,42 +150,6 @@ async function onSourceFilePicked(event) {
     fillSelect(ui.sourceSheet1a, []);
     fillSelect(ui.sourceSheet1b, []);
     showError(`Nie udało się wczytać source file: ${error.message}`);
-  }
-}
-
-async function onMasterFilePicked(event) {
-  const file = event.target.files?.[0];
-  if (!file) {
-    state.masterWorkbook = null;
-    state.masterWorkbookName = "";
-    state.masterWorkbookBytes = null;
-    state.masterFileHandle = null;
-    state.masterSheets = [];
-    fillSelect(ui.masterSheet, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
-  try {
-    const loaded = await readWorkbookBundle(file);
-    state.masterWorkbook = loaded.workbook;
-    state.masterWorkbookBytes = loaded.buffer;
-    state.masterWorkbookName = file.name;
-    state.masterFileHandle = null;
-    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
-    fillSelect(ui.masterSheet, state.masterSheets);
-    hideInlineError();
-    log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
-    log(`Master sheets: ${state.masterSheets.join(" | ")}`);
-    refreshUiReadiness();
-  } catch (error) {
-    state.masterWorkbook = null;
-    state.masterWorkbookName = "";
-    state.masterWorkbookBytes = null;
-    state.masterFileHandle = null;
-    state.masterSheets = [];
-    fillSelect(ui.masterSheet, []);
-    showError(`Nie udało się wczytać master file: ${error.message}`);
   }
 }
 
