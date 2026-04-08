@@ -94,42 +94,8 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 1fr;
   min-height: calc(100vh - 66px);
-}
-
-.sidebar {
-  border-right: 1px solid var(--border);
-  padding: 20px 16px;
-  background: #ebf0f8;
-}
-
-.sidebar h2 {
-  margin-top: 0;
-  font-size: 1.05rem;
-}
-
-.tool-button {
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  cursor: pointer;
-}
-
-.tool-button.active {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(0, 77, 159, 0.15);
-}
-
-.tool-button:disabled {
-  cursor: not-allowed;
-  color: var(--muted);
-  background: #f8fafc;
 }
 
 .content {
@@ -432,15 +398,6 @@ th {
 }
 
 @media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
   .cards {
     grid-template-columns: 1fr;
   }

@@ -803,10 +803,22 @@ function setWorksheetCellValue(ws, rowIdx, colIdx, value) {
   const ref = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
   const prev = ws[ref] || {};
   if (value === null || value === undefined || value === "") {
-    ws[ref] = { ...prev, t: "z", v: undefined };
+    if (prev && Object.keys(prev).length > 0) {
+      delete prev.v;
+      if (prev.f) {
+        delete prev.f;
+      }
+      ws[ref] = prev;
+    } else {
+      ws[ref] = { t: "z" };
+    }
     return;
   }
-  ws[ref] = { ...prev, t: "n", v: Number(value) };
+  const cell = { ...prev, t: "n", v: Number(value) };
+  if (cell.f) {
+    delete cell.f;
+  }
+  ws[ref] = cell;
 }
 
 function normalizeMonthLabel(raw) {
@@ -1124,7 +1136,13 @@ function writeWorkbookDownload(workbook, filename) {
 
 async function saveMasterWorkbook(workbook) {
   const outputName = ensureXlsxName(state.masterWorkbookName || "master.xlsx");
-  const array = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  const array = XLSX.write(workbook, {
+    bookType: "xlsx",
+    type: "array",
+    cellStyles: true,
+    cellNF: true,
+    cellDates: true,
+  });
   if (state.masterFileHandle && supportsFsAccess()) {
     await writeArrayToHandle(state.masterFileHandle, array);
     return { mode: "overwrite", name: outputName };
