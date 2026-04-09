@@ -816,6 +816,8 @@ function buildMasterUpdatePlan(workbook, sheetName, summaryRows, monthLabel) {
   const monthCols = findMonthColumns(ws, range, monthLabel);
   const monthIdx = monthCols.holidayIdx;
   const specialIdx = monthCols.specialIdx;
+  const totalHolidayIdx = findColumnIndexByHeaderContains(ws, range, "total holiday balance");
+  const totalSpecialIdx = findColumnIndexByHeaderContains(ws, range, "total special holiday balance");
 
   const bySap = new Map();
   for (let r = 0; r <= range.e.r; r += 1) {
@@ -839,7 +841,7 @@ function buildMasterUpdatePlan(workbook, sheetName, summaryRows, monthLabel) {
     log(`OK SAP ${rec["SAP ID"]}: Holiday=${round2(rec.Holiday)}, Special=${round2(rec.Special)}`);
   });
 
-  return { sheetName, monthIdx, specialIdx, updates };
+  return { sheetName, monthIdx, specialIdx, totalHolidayIdx, totalSpecialIdx, updates };
 }
 
 function applyMasterUpdatePlanToWorkbook(workbook, updatePlan) {
@@ -850,6 +852,12 @@ function applyMasterUpdatePlanToWorkbook(workbook, updatePlan) {
   updatePlan.updates.forEach((update) => {
     setWorksheetCellValue(ws, update.rowIdx, update.monthIdx ?? updatePlan.monthIdx, update.holiday);
     setWorksheetCellValue(ws, update.rowIdx, update.specialIdx ?? updatePlan.specialIdx, update.special);
+    if (Number.isInteger(updatePlan.totalHolidayIdx)) {
+      setWorksheetCellValue(ws, update.rowIdx, updatePlan.totalHolidayIdx, update.holiday);
+    }
+    if (Number.isInteger(updatePlan.totalSpecialIdx)) {
+      setWorksheetCellValue(ws, update.rowIdx, updatePlan.totalSpecialIdx, update.special);
+    }
   });
 }
 
@@ -913,6 +921,23 @@ function resolveMonthPairColumns(ws, range, monthRow, monthCol) {
   }
   if (monthCol - 1 >= 0) {
     return { holidayIdx: monthCol, specialIdx: monthCol - 1 };
+  }
+  return null;
+}
+
+function findColumnIndexByHeaderContains(ws, range, fragment) {
+  const needle = String(fragment || "").trim().toLowerCase();
+  if (!needle) {
+    return null;
+  }
+  const maxHeaderRow = Math.min(range.e.r, 4);
+  for (let r = 0; r <= maxHeaderRow; r += 1) {
+    for (let c = 0; c <= range.e.c; c += 1) {
+      const value = String(getWorksheetCellValue(ws, r, c) || "").trim().toLowerCase();
+      if (value.includes(needle)) {
+        return c;
+      }
+    }
   }
   return null;
 }
@@ -1572,6 +1597,24 @@ function updateWorksheetXmlValues(sheetXml, updatePlan) {
   updatePlan.updates.forEach((update) => {
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
+    if (Number.isInteger(updatePlan.totalHolidayIdx)) {
+      setExistingWorksheetXmlCellByCoords(
+        doc,
+        sheetData,
+        update.rowIdx + 1,
+        updatePlan.totalHolidayIdx + 1,
+        update.holiday
+      );
+    }
+    if (Number.isInteger(updatePlan.totalSpecialIdx)) {
+      setExistingWorksheetXmlCellByCoords(
+        doc,
+        sheetData,
+        update.rowIdx + 1,
+        updatePlan.totalSpecialIdx + 1,
+        update.special
+      );
+    }
   });
   const serialized = new XMLSerializer().serializeToString(doc);
   // Avoid double XML declaration which can corrupt the worksheet.
