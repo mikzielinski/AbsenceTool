@@ -686,6 +686,12 @@ async function runProcess4() {
       records.push(...fileRecords);
       log(`  pages: ${pagesTotal}, with text: ${pagesWithText}`);
       log(`  ${fileRecords.length} employee record(s).`);
+      fileRecords.forEach((rec) => {
+        log(
+          `  page ${rec.page ?? "?"}: ID=${rec.sap_id}, Name=${rec.name || "Unknown"}, `
+          + `Holiday=${rec.payslip_holidays_total ?? "null"}, Special=${rec.payslip_special_total ?? "null"}`
+        );
+      });
     }
     const reconciliationRows = buildPayslipReportRows(records, totals, specials, names);
     const outWb = buildPayslipReportWorkbook(reconciliationRows);
@@ -1162,22 +1168,29 @@ async function parsePayslipBatch(file) {
   if (pagesTotal <= 0) {
     throw new Error(`Payslip PDF nie zawiera stron: ${file.name}`);
   }
-  const pageTexts = [];
+  const records = [];
+  let pagesWithText = 0;
   for (let i = 1; i <= pagesTotal; i += 1) {
     const page = await pdf.getPage(i);
     const text = await extractPageText(page);
-    if (text) pageTexts.push(text);
+    if (!text) {
+      continue;
+    }
+    pagesWithText += 1;
+    const rec = parseEmployeeBlock(text);
+    rec.page = i;
+    if (rec.sap_id === "UNKNOWN") {
+      continue;
+    }
+    records.push(rec);
   }
-  const pagesWithText = pageTexts.length;
   if (pagesWithText === 0) {
     throw new Error(`Payslip PDF nie zawiera rozpoznawalnego tekstu: ${file.name}`);
   }
-  const fullText = pageTexts.join("\n");
-  const rec = parseEmployeeBlock(fullText);
-  if (rec.sap_id === "UNKNOWN") {
-    throw new Error(`Nie udało się odczytać numeru pracownika z payslipa: ${file.name}`);
+  if (records.length === 0) {
+    throw new Error(`Nie udało się odczytać żadnego numeru pracownika z payslipa: ${file.name}`);
   }
-  return { records: [rec], pagesTotal, pagesWithText };
+  return { records, pagesTotal, pagesWithText };
 }
 
 function parseEmployeeBlock(text) {
