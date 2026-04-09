@@ -47,7 +47,7 @@
         <div class="step-list">
           <div class="step-item"><strong>Process 1:</strong> Stworzenie inputu do Flexi.</div>
           <div class="step-item"><strong>Process 2:</strong> Update master file i pobranie nowego pliku.</div>
-          <div class="step-item"><strong>Process 3:</strong> Porównanie sald source vs master.</div>
+          <div class="step-item"><strong>Process 3:</strong> Porównanie sald między dwoma plikami.</div>
           <div class="step-item"><strong>Process 4:</strong> Porównanie mastera z payslipami.</div>
         </div>
 
@@ -61,8 +61,12 @@
             <span id="masterStatus" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
-            <span class="status-label">Master Excel (P3)</span>
-            <span id="masterP3Status" class="status-pill warn">Brak pliku</span>
+            <span class="status-label">Plik A (P3)</span>
+            <span id="p3FileAStatus" class="status-pill warn">Brak pliku</span>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Plik B (P3)</span>
+            <span id="p3FileBStatus" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
             <span class="status-label">Master Excel (P4)</span>
@@ -130,19 +134,23 @@
         <fieldset class="form-block">
           <legend>Wymagane dane dla Process 3</legend>
           <label>
-            Wybierz arkusz source dla Process 3 (Holiday Balance)
-            <select id="sourceSheet1b"></select>
+            Wybierz plik A dla Process 3
+            <input id="p3FileA" type="file" accept=".xlsx,.xls" />
           </label>
           <label>
-            Wybierz zaktualizowany plik master dla Process 3
-            <input id="masterFileP3" type="file" accept=".xlsx" />
+            Wybierz arkusz z pliku A
+            <select id="p3SheetA"></select>
           </label>
           <label>
-            Wybierz arkusz zaktualizowanego mastera dla Process 3
-            <select id="masterSheetP3"></select>
+            Wybierz plik B dla Process 3
+            <input id="p3FileB" type="file" accept=".xlsx,.xls" />
+          </label>
+          <label>
+            Wybierz arkusz z pliku B
+            <select id="p3SheetB"></select>
           </label>
           <p class="hint-plain">
-            Process 3 wymaga ponownego wyboru pliku master (użyj pliku wygenerowanego w Process 2).
+            Process 3 porównuje salda pomiędzy dwoma wskazanymi plikami i ich arkuszami.
           </p>
         </fieldset>
 

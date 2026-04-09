@@ -24,14 +24,16 @@ const state = {
   sourceWorkbook: null,
   sourceWorkbookName: "",
   sourceSheets: [],
+  p3WorkbookA: null,
+  p3WorkbookAName: "",
+  p3SheetsA: [],
+  p3WorkbookB: null,
+  p3WorkbookBName: "",
+  p3SheetsB: [],
   masterWorkbook: null,
   masterWorkbookName: "",
   masterWorkbookBytes: null,
   masterSheets: [],
-  masterWorkbookP3: null,
-  masterWorkbookNameP3: "",
-  masterWorkbookBytesP3: null,
-  masterSheetsP3: [],
   masterWorkbookP2: null,
   masterWorkbookNameP2: "",
   masterSheetsP2: [],
@@ -47,11 +49,12 @@ const ui = {
   panelP3: document.getElementById("panelP3"),
   sourceFile: document.getElementById("sourceFile"),
   sourceSheet1a: document.getElementById("sourceSheet1a"),
-  sourceSheet1b: document.getElementById("sourceSheet1b"),
+  p3FileA: document.getElementById("p3FileA"),
+  p3SheetA: document.getElementById("p3SheetA"),
+  p3FileB: document.getElementById("p3FileB"),
+  p3SheetB: document.getElementById("p3SheetB"),
   masterFile: document.getElementById("masterFile"),
   masterSheet: document.getElementById("masterSheet"),
-  masterFileP3: document.getElementById("masterFileP3"),
-  masterSheetP3: document.getElementById("masterSheetP3"),
   masterFileP2: document.getElementById("masterFileP2"),
   masterSheetP2: document.getElementById("masterSheetP2"),
   payslipFiles: document.getElementById("payslipFiles"),
@@ -63,7 +66,8 @@ const ui = {
   logOutput: document.getElementById("logOutput"),
   statusSource: document.getElementById("sourceStatus"),
   statusMaster: document.getElementById("masterStatus"),
-  statusMasterP3: document.getElementById("masterP3Status"),
+  statusP3FileA: document.getElementById("p3FileAStatus"),
+  statusP3FileB: document.getElementById("p3FileBStatus"),
   statusMasterP2: document.getElementById("masterP2Status"),
   statusPdfs: document.getElementById("payslipStatus"),
   errorBox: document.getElementById("errorBox"),
@@ -81,9 +85,9 @@ function init() {
   setActiveTab("p1");
   bindEvents();
   fillSelect(ui.sourceSheet1a, []);
-  fillSelect(ui.sourceSheet1b, []);
+  fillSelect(ui.p3SheetA, []);
+  fillSelect(ui.p3SheetB, []);
   fillSelect(ui.masterSheet, []);
-  fillSelect(ui.masterSheetP3, []);
   fillSelect(ui.masterSheetP2, []);
   refreshUiReadiness();
   log("Gotowe. Zrób procesy 1-2-3-4 na ekranie.");
@@ -107,13 +111,14 @@ function bindEvents() {
   ui.tabP3.addEventListener("click", () => setActiveTab("p3"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
   ui.masterFile.addEventListener("change", onMasterFilePicked);
-  ui.masterFileP3.addEventListener("change", onMasterFileP3Picked);
+  ui.p3FileA.addEventListener("change", onP3FileAPicked);
+  ui.p3FileB.addEventListener("change", onP3FileBPicked);
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
   ui.payslipFiles.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
-  ui.sourceSheet1b.addEventListener("change", refreshUiReadiness);
+  ui.p3SheetA.addEventListener("change", refreshUiReadiness);
+  ui.p3SheetB.addEventListener("change", refreshUiReadiness);
   ui.masterSheet.addEventListener("change", refreshUiReadiness);
-  ui.masterSheetP3.addEventListener("change", refreshUiReadiness);
   ui.masterSheetP2.addEventListener("change", refreshUiReadiness);
   ui.run1.addEventListener("click", runProcess1);
   ui.run2.addEventListener("click", runProcess2);
@@ -141,7 +146,6 @@ async function onSourceFilePicked(event) {
     state.sourceWorkbookName = "";
     state.sourceSheets = [];
     fillSelect(ui.sourceSheet1a, []);
-    fillSelect(ui.sourceSheet1b, []);
     hideInlineError();
     refreshUiReadiness();
     return;
@@ -151,7 +155,6 @@ async function onSourceFilePicked(event) {
     state.sourceWorkbookName = file.name;
     state.sourceSheets = getWorkbookSheetNames(state.sourceWorkbook);
     fillSelect(ui.sourceSheet1a, state.sourceSheets);
-    fillSelect(ui.sourceSheet1b, state.sourceSheets);
     hideInlineError();
     log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
     log(`Source sheets: ${state.sourceSheets.join(" | ")}`);
@@ -161,7 +164,6 @@ async function onSourceFilePicked(event) {
     state.sourceWorkbookName = "";
     state.sourceSheets = [];
     fillSelect(ui.sourceSheet1a, []);
-    fillSelect(ui.sourceSheet1b, []);
     showError(`Nie udało się wczytać source file: ${error.message}`);
   }
 }
@@ -174,7 +176,6 @@ async function onMasterFilePicked(event) {
     state.masterWorkbookBytes = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
-    clearP3MasterSelection();
     hideInlineError();
     refreshUiReadiness();
     return;
@@ -186,7 +187,6 @@ async function onMasterFilePicked(event) {
     state.masterWorkbookBytes = loaded.buffer;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
     fillSelect(ui.masterSheet, state.masterSheets);
-    clearP3MasterSelection("Process 3: wybierz ponownie update'owany plik master.");
     hideInlineError();
     log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
     log(`Master sheets: ${state.masterSheets.join(" | ")}`);
@@ -197,42 +197,66 @@ async function onMasterFilePicked(event) {
     state.masterWorkbookBytes = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
-    clearP3MasterSelection();
     refreshUiReadiness();
     showError(`Nie udało się wczytać master file: ${error.message}`);
   }
 }
 
-async function onMasterFileP3Picked(event) {
+async function onP3FileAPicked(event) {
   const file = event.target.files?.[0];
   if (!file) {
-    state.masterWorkbookP3 = null;
-    state.masterWorkbookNameP3 = "";
-    state.masterWorkbookBytesP3 = null;
-    state.masterSheetsP3 = [];
-    fillSelect(ui.masterSheetP3, []);
+    state.p3WorkbookA = null;
+    state.p3WorkbookAName = "";
+    state.p3SheetsA = [];
+    fillSelect(ui.p3SheetA, []);
     hideInlineError();
     refreshUiReadiness();
     return;
   }
   try {
-    const loaded = await readWorkbookBundle(file);
-    state.masterWorkbookP3 = loaded.workbook;
-    state.masterWorkbookNameP3 = file.name;
-    state.masterWorkbookBytesP3 = loaded.buffer;
-    state.masterSheetsP3 = getWorkbookSheetNames(state.masterWorkbookP3);
-    fillSelect(ui.masterSheetP3, state.masterSheetsP3);
+    state.p3WorkbookA = await readWorkbookFromFile(file);
+    state.p3WorkbookAName = file.name;
+    state.p3SheetsA = getWorkbookSheetNames(state.p3WorkbookA);
+    fillSelect(ui.p3SheetA, state.p3SheetsA);
     hideInlineError();
-    log(`Master (P3) loaded: ${file.name} (${state.masterSheetsP3.length} sheet(s)).`);
-    log(`Master (P3) sheets: ${state.masterSheetsP3.join(" | ")}`);
+    log(`Process 3 - Plik A loaded: ${file.name} (${state.p3SheetsA.length} sheet(s)).`);
+    log(`Process 3 - Plik A sheets: ${state.p3SheetsA.join(" | ")}`);
     refreshUiReadiness();
   } catch (error) {
-    state.masterWorkbookP3 = null;
-    state.masterWorkbookNameP3 = "";
-    state.masterWorkbookBytesP3 = null;
-    state.masterSheetsP3 = [];
-    fillSelect(ui.masterSheetP3, []);
-    showError(`Nie udało się wczytać master file (P3): ${error.message}`);
+    state.p3WorkbookA = null;
+    state.p3WorkbookAName = "";
+    state.p3SheetsA = [];
+    fillSelect(ui.p3SheetA, []);
+    showError(`Nie udało się wczytać pliku A (Process 3): ${error.message}`);
+  }
+}
+
+async function onP3FileBPicked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    state.p3WorkbookB = null;
+    state.p3WorkbookBName = "";
+    state.p3SheetsB = [];
+    fillSelect(ui.p3SheetB, []);
+    hideInlineError();
+    refreshUiReadiness();
+    return;
+  }
+  try {
+    state.p3WorkbookB = await readWorkbookFromFile(file);
+    state.p3WorkbookBName = file.name;
+    state.p3SheetsB = getWorkbookSheetNames(state.p3WorkbookB);
+    fillSelect(ui.p3SheetB, state.p3SheetsB);
+    hideInlineError();
+    log(`Process 3 - Plik B loaded: ${file.name} (${state.p3SheetsB.length} sheet(s)).`);
+    log(`Process 3 - Plik B sheets: ${state.p3SheetsB.join(" | ")}`);
+    refreshUiReadiness();
+  } catch (error) {
+    state.p3WorkbookB = null;
+    state.p3WorkbookBName = "";
+    state.p3SheetsB = [];
+    fillSelect(ui.p3SheetB, []);
+    showError(`Nie udało się wczytać pliku B (Process 3): ${error.message}`);
   }
 }
 
@@ -265,14 +289,20 @@ async function onMasterFileP2Picked(event) {
   }
 }
 
-function clearP3MasterSelection(logMessage = "") {
-  state.masterWorkbookP3 = null;
-  state.masterWorkbookNameP3 = "";
-  state.masterWorkbookBytesP3 = null;
-  state.masterSheetsP3 = [];
-  fillSelect(ui.masterSheetP3, []);
-  if (ui.masterFileP3) {
-    ui.masterFileP3.value = "";
+function clearP3Selections(logMessage = "") {
+  state.p3WorkbookA = null;
+  state.p3WorkbookAName = "";
+  state.p3SheetsA = [];
+  fillSelect(ui.p3SheetA, []);
+  if (ui.p3FileA) {
+    ui.p3FileA.value = "";
+  }
+  state.p3WorkbookB = null;
+  state.p3WorkbookBName = "";
+  state.p3SheetsB = [];
+  fillSelect(ui.p3SheetB, []);
+  if (ui.p3FileB) {
+    ui.p3FileB.value = "";
   }
   if (logMessage) {
     log(logMessage);
@@ -382,7 +412,8 @@ function setBadge(el, ok, text) {
 function refreshUiReadiness() {
   const hasSource = !!state.sourceWorkbook;
   const hasMaster = !!state.masterWorkbook;
-  const hasMasterP3 = !!state.masterWorkbookP3;
+  const hasP3FileA = !!state.p3WorkbookA;
+  const hasP3FileB = !!state.p3WorkbookB;
   const hasMasterP2 = !!state.masterWorkbookP2;
   const hasPdfs = (ui.payslipFiles.files || []).length > 0;
   setBadge(
@@ -400,11 +431,18 @@ function refreshUiReadiness() {
       : "Brak pliku master"
   );
   setBadge(
-    ui.statusMasterP3,
-    hasMasterP3,
-    hasMasterP3
-      ? `OK: ${state.masterWorkbookNameP3} (${state.masterSheetsP3.length} ark.)`
-      : "Brak pliku master P3"
+    ui.statusP3FileA,
+    hasP3FileA,
+    hasP3FileA
+      ? `OK: ${state.p3WorkbookAName} (${state.p3SheetsA.length} ark.)`
+      : "Brak pliku A (P3)"
+  );
+  setBadge(
+    ui.statusP3FileB,
+    hasP3FileB,
+    hasP3FileB
+      ? `OK: ${state.p3WorkbookBName} (${state.p3SheetsB.length} ark.)`
+      : "Brak pliku B (P3)"
   );
   setBadge(
     ui.statusMasterP2,
@@ -417,7 +455,7 @@ function refreshUiReadiness() {
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
-  const readyProcess3 = hasSource && hasMasterP3 && !!ui.sourceSheet1b.value && !!ui.masterSheetP3.value;
+  const readyProcess3 = hasP3FileA && hasP3FileB && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
   const p4MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
   const readyProcess4 = hasPdfs && !!p4MasterReady;
   ui.run1.disabled = !readyProcess1;
@@ -540,14 +578,14 @@ function validateProcess2Inputs() {
 }
 
 function validateProcess3Inputs() {
-  if (!state.sourceWorkbook) {
-    throw new Error("Wybierz Current Holiday Report.");
+  if (!state.p3WorkbookA) {
+    throw new Error("Wybierz plik A dla Process 3.");
   }
-  if (!state.masterWorkbookP3) {
-    throw new Error("Wybierz update'owany Holiday Balance master file dla Process 3.");
+  if (!state.p3WorkbookB) {
+    throw new Error("Wybierz plik B dla Process 3.");
   }
-  if (!ui.sourceSheet1b.value || !ui.masterSheetP3.value) {
-    throw new Error("Wybierz wymagane sheety dla Process 3.");
+  if (!ui.p3SheetA.value || !ui.p3SheetB.value) {
+    throw new Error("Wybierz wymagane sheety dla Process 3 (plik A i plik B).");
   }
 }
 
@@ -615,13 +653,13 @@ async function runProcess2() {
     }
     const outName = buildUpdatedMasterName(state.masterWorkbookName, monthLabel);
     writeBytesDownload(outBytes, outName);
-    clearP3MasterSelection("Process 3: wybierz ponownie pobrany plik master.");
+    clearP3Selections("Process 3: wybierz ponownie pliki A i B do porównania.");
     log(`Master updated (${updatePlan.updates.length} employee(s)).`);
     setResultSummary([
       "Process 2 zakończony.",
       `Master updated row(s): ${updatePlan.updates.length}.`,
       "Wynik: utworzono nowy plik master po zmianach bez ingerencji w formatowanie.",
-      "Process 3: wymagany ponowny wybór update'owanego pliku master.",
+      "Process 3: wymagany ponowny wybór plików A i B.",
       `Pobrany plik: ${outName}.`,
     ]);
     refreshUiReadiness();
@@ -636,11 +674,11 @@ async function runProcess3() {
     validateProcess3Inputs();
     log("=== Process 3 ===");
     const srcSummary = loadSourceBalanceSummary(
-      sheetToRows(state.sourceWorkbook, ui.sourceSheet1b.value)
+      sheetToRows(state.p3WorkbookA, ui.p3SheetA.value)
     );
     const { totals, names } = readCollectiveTotals(
-      state.masterWorkbookP3,
-      ui.masterSheetP3.value
+      state.p3WorkbookB,
+      ui.p3SheetB.value
     );
     const compareRows = buildBalanceComparisonRows(srcSummary, totals, names);
     const outWb = buildBalanceComparisonWorkbook(compareRows);
