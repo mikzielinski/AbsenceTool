@@ -682,8 +682,9 @@ async function runProcess4() {
     const records = [];
     for (const file of pdfFiles) {
       log(`Parsing ${file.name} ...`);
-      const fileRecords = await parsePayslipBatch(file);
+      const { records: fileRecords, pagesTotal, pagesWithText } = await parsePayslipBatch(file);
       records.push(...fileRecords);
+      log(`  pages: ${pagesTotal}, with text: ${pagesWithText}`);
       log(`  ${fileRecords.length} employee record(s).`);
     }
     const reconciliationRows = buildPayslipReportRows(records, totals, specials, names);
@@ -1157,18 +1158,26 @@ async function parsePayslipBatch(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
   const pdf = await loadingTask.promise;
+  const pagesTotal = Number(pdf.numPages || 0);
+  if (pagesTotal <= 0) {
+    throw new Error(`Payslip PDF nie zawiera stron: ${file.name}`);
+  }
   const pageTexts = [];
-  for (let i = 1; i <= pdf.numPages; i += 1) {
+  for (let i = 1; i <= pagesTotal; i += 1) {
     const page = await pdf.getPage(i);
     const text = await extractPageText(page);
     if (text) pageTexts.push(text);
+  }
+  const pagesWithText = pageTexts.length;
+  if (pagesWithText === 0) {
+    throw new Error(`Payslip PDF nie zawiera rozpoznawalnego tekstu: ${file.name}`);
   }
   const fullText = pageTexts.join("\n");
   const rec = parseEmployeeBlock(fullText);
   if (rec.sap_id === "UNKNOWN") {
     throw new Error(`Nie udało się odczytać numeru pracownika z payslipa: ${file.name}`);
   }
-  return [rec];
+  return { records: [rec], pagesTotal, pagesWithText };
 }
 
 function parseEmployeeBlock(text) {
