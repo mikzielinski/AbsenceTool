@@ -1264,16 +1264,14 @@ function writeBytesDownload(bytes, filename) {
   });
   const safeName = ensureXlsxName(filename);
   const url = URL.createObjectURL(blob);
-  try {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = safeName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = safeName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revoke asynchronously to avoid race with browser download handling.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function buildUpdatedMasterName(baseName, monthLabel) {
@@ -1369,7 +1367,12 @@ function updateWorksheetXmlValues(sheetXml, updatePlan) {
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
   });
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${new XMLSerializer().serializeToString(doc)}`;
+  const serialized = new XMLSerializer().serializeToString(doc);
+  // Avoid double XML declaration which can corrupt the worksheet.
+  if (serialized.startsWith("<?xml")) {
+    return serialized;
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${serialized}`;
 }
 
 function setExistingWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
