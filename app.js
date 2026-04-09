@@ -1083,11 +1083,14 @@ function readCollectiveTotals(workbook, sheetName) {
       names[sap] = String(row[nameCol]).trim();
     }
   });
-  // Prefer totals recomputed from monthly columns to avoid stale cached formula values.
-  if (computedTotals) {
+  // Use column totals from master by default.
+  // Recomputed month totals are fallback only when summary columns are missing.
+  if (computedTotals && !holidayCol) {
     Object.keys(computedTotals.holidays).forEach((sap) => {
       totals[sap] = computedTotals.holidays[sap];
     });
+  }
+  if (computedTotals && !specialCol) {
     Object.keys(computedTotals.specials).forEach((sap) => {
       specials[sap] = computedTotals.specials[sap];
     });
