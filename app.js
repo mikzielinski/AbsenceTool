@@ -358,27 +358,8 @@ function readWorkbookFromBuffer(buffer) {
     throw new Error("Plik nie zawiera żadnych arkuszy lub ma nieobsługiwany format.");
   }
 
-  safeRecalculateWorkbookFormulas(workbook);
   workbook.SheetNames = sheetNames;
   return workbook;
-}
-
-function safeRecalculateWorkbookFormulas(workbook) {
-  try {
-    recalculateWorkbookFormulas(workbook);
-  } catch (error) {
-    log(`(!) Nie udało się przeliczyć formuł po wczytaniu pliku: ${error.message}`);
-  }
-}
-
-function recalculateWorkbookFormulas(workbook) {
-  if (!workbook || typeof workbook !== "object") {
-    return;
-  }
-  if (!window.XLSX_CALC || typeof window.XLSX_CALC !== "function") {
-    return;
-  }
-  window.XLSX_CALC(workbook);
 }
 
 function getWorkbookSheetNames(workbook) {
@@ -1084,9 +1065,13 @@ function readCollectiveTotals(workbook, sheetName) {
     throw new Error("Master sheet is empty.");
   }
   const header = Object.keys(rows[0]);
+  const idCol = findColumn(header, ["SAP ID", "ID", "Holid"]);
   const holidayCol = findColumn(header, ["Total holiday balance"]);
   const specialCol = findColumn(header, ["Total special holiday balance"]);
   const nameCol = findColumn(header, ["Employee", "Name", "Employee Name"]);
+  if (!idCol) {
+    throw new Error(`File B must contain ID column ('SAP ID', 'ID' or 'Holid'). Found: ${header.join(", ")}`);
+  }
   if (!holidayCol) {
     throw new Error(`File B must contain column 'Total holiday balance'. Found: ${header.join(", ")}`);
   }
@@ -1094,15 +1079,23 @@ function readCollectiveTotals(workbook, sheetName) {
   const totals = {};
   const specials = {};
   const names = {};
+  const duplicateIds = new Set();
   rows.forEach((row) => {
-    const sap = normalizeSap(row[header[0]]);
+    const sap = normalizeSap(row[idCol]);
     if (!sap) return;
+    if (Object.hasOwn(totals, sap)) {
+      duplicateIds.add(sap);
+      return;
+    }
     totals[sap] = round2(Number((holidayCol && row[holidayCol]) || 0));
     specials[sap] = round2(Number((specialCol && row[specialCol]) || 0));
     if (nameCol && row[nameCol]) {
       names[sap] = String(row[nameCol]).trim();
     }
   });
+  if (duplicateIds.size > 0) {
+    throw new Error(`File B contains duplicated ID(s): ${Array.from(duplicateIds).slice(0, 10).join(", ")}.`);
+  }
   return { totals, specials, names };
 }
 
