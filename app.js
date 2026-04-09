@@ -1159,32 +1159,32 @@ async function parsePayslipBatch(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
   const pdf = await loadingTask.promise;
-  const records = [];
+  const pageTexts = [];
   for (let i = 1; i <= pdf.numPages; i += 1) {
     const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const text = textContent.items.map((item) => item.str).join("\n");
-    if (!/Employeeno/i.test(text)) {
-      continue;
-    }
-    const rec = parseEmployeeBlock(text);
-    if (rec.sap_id !== "UNKNOWN") {
-      records.push(rec);
-    }
+    const text = await extractPageText(page);
+    if (text) pageTexts.push(text);
   }
-  return records;
+  const fullText = pageTexts.join("\n");
+  const rec = parseEmployeeBlock(fullText);
+  if (rec.sap_id === "UNKNOWN") {
+    throw new Error(`Nie udało się odczytać numeru pracownika z payslipa: ${file.name}`);
+  }
+  return [rec];
 }
 
 function parseEmployeeBlock(text) {
-  const em = text.match(/Employeeno[:\s]+(\d+)/i);
-  const sap = em ? em[1].trim() : "UNKNOWN";
-  const nameMatch = text.match(/^([A-Za-z][A-Za-z\s]+?)\s*\nEmployeeno/im);
-  const name = nameMatch ? nameMatch[1].trim() : "Unknown";
-  const hTotal = text.match(/Holidays total\s+([\d.,\-]+)\s+([\d.,\-]+)/i);
-  const pHoliday = hTotal ? parseFlexibleNum(hTotal[2]) : null;
-  const specialTwo = text.match(/Special holidays\s+([\d.,\-]+)\s+([\d.,\-]+)/i);
-  const specialOne = text.match(/Special holidays\s+([\d.,\-]+)/i);
-  const pSpecial = specialTwo ? parseFlexibleNum(specialTwo[2]) : (specialOne ? parseFlexibleNum(specialOne[1]) : null);
+  const sap = extractEmployeeNumber(text);
+  const name = extractEmployeeName(text);
+  const pHoliday = extractAmountNearLabel(text, [
+    /holidays?\s*total/i,
+    /total\s*holidays?/i,
+    /holiday\s*balance/i,
+  ]);
+  const pSpecial = extractAmountNearLabel(text, [
+    /special\s*holidays?/i,
+    /special\s*holiday\s*balance/i,
+  ]);
   return {
     sap_id: sap,
     name,
@@ -1194,20 +1194,184 @@ function parseEmployeeBlock(text) {
 }
 
 function parseFlexibleNum(raw) {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  const hasDot = value.includes(".");
-  const hasComma = value.includes(",");
+  const value = String(raw || "")
+    .replaceAll("\u00a0", " ")
+    .trim();
+  if (!value) {
+    return null;
+  }
+  const normalized = value
+    .replace(/\s+/g, "")
+    .replace(/[^0-9,.\-]/g, "");
+  if (!normalized || !/[0-9]/.test(normalized)) {
+    return null;
+  }
+  const hasDot = normalized.includes(".");
+  const hasComma = normalized.includes(",");
   if (hasDot && hasComma) {
-    if (value.lastIndexOf(".") > value.lastIndexOf(",")) {
-      return round2(Number(value.replaceAll(",", "")));
+    if (normalized.lastIndexOf(".") > normalized.lastIndexOf(",")) {
+      return round2(Number(normalized.replaceAll(",", "")));
     }
-    return round2(Number(value.replaceAll(".", "").replaceAll(",", ".")));
+    return round2(Number(normalized.replaceAll(".", "").replaceAll(",", ".")));
   }
   if (hasComma) {
-    return round2(Number(value.replaceAll(",", ".")));
+    return round2(Number(normalized.replaceAll(",", ".")));
   }
-  return round2(Number(value));
+  return round2(Number(normalized));
+}
+
+function splitTextLines(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function extractEmployeeNumber(text) {
+  const patterns = [
+    /employee\s*no\.?\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
+    /employee\s*number\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
+    /emp(?:loyee)?\s*id\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
+    /sap\s*id\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (match && match[1]) {
+      const normalized = normalizeSap(match[1].replace(/\s+/g, ""));
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+
+  const lines = splitTextLines(text);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/employee\s*(no|number|id)|sap\s*id/i.test(lines[i])) {
+      continue;
+    }
+    const sameLineNumber = lines[i].match(/([0-9]{4,})/);
+    if (sameLineNumber?.[1]) {
+      return normalizeSap(sameLineNumber[1]);
+    }
+    const nextLine = lines[i + 1] || "";
+    const nextLineNumber = nextLine.match(/([0-9]{4,})/);
+    if (nextLineNumber?.[1]) {
+      return normalizeSap(nextLineNumber[1]);
+    }
+  }
+  return "UNKNOWN";
+}
+
+function looksLikeEmployeeName(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return false;
+  }
+  if (/[0-9]/.test(text)) {
+    return false;
+  }
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length >= 2 && words.join("").length >= 4;
+}
+
+function extractEmployeeName(text) {
+  const lines = splitTextLines(text);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const direct = line.match(/employee\s*name\s*[:\-]\s*(.+)$/i) || line.match(/^name\s*[:\-]\s*(.+)$/i);
+    if (direct?.[1] && looksLikeEmployeeName(direct[1])) {
+      return direct[1].trim();
+    }
+  }
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/employee\s*(no|number|id)/i.test(lines[i])) {
+      continue;
+    }
+    const prev = lines[i - 1] || "";
+    if (looksLikeEmployeeName(prev)) {
+      return prev.trim();
+    }
+  }
+  return "Unknown";
+}
+
+function extractNumbersFromText(text) {
+  const raw = String(text || "").match(/-?\d[\d\s.,-]*/g) || [];
+  return raw
+    .map((value) => parseFlexibleNum(value))
+    .filter((value) => value !== null && value !== undefined);
+}
+
+function extractAmountNearLabel(text, labelPatterns) {
+  const lines = splitTextLines(text);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const matchesLabel = labelPatterns.some((pattern) => pattern.test(line));
+    if (!matchesLabel) {
+      continue;
+    }
+    const currentNums = extractNumbersFromText(line);
+    if (currentNums.length > 0) {
+      return currentNums[currentNums.length - 1];
+    }
+    const nextLine = lines[i + 1] || "";
+    const nextNums = extractNumbersFromText(nextLine);
+    if (nextNums.length > 0) {
+      return nextNums[nextNums.length - 1];
+    }
+  }
+  return null;
+}
+
+async function extractPageText(page) {
+  const textContent = await page.getTextContent();
+  const items = (textContent.items || [])
+    .map((item) => ({
+      str: String(item?.str || "").trim(),
+      x: Number(item?.transform?.[4] || 0),
+      y: Number(item?.transform?.[5] || 0),
+    }))
+    .filter((item) => item.str);
+  if (items.length === 0) {
+    return "";
+  }
+
+  items.sort((a, b) => {
+    const yDiff = b.y - a.y;
+    if (Math.abs(yDiff) > 2) {
+      return yDiff;
+    }
+    return a.x - b.x;
+  });
+
+  const lines = [];
+  let current = [];
+  let currentY = null;
+  items.forEach((item) => {
+    if (currentY === null || Math.abs(item.y - currentY) <= 2) {
+      current.push(item);
+      currentY = currentY === null ? item.y : currentY;
+      return;
+    }
+    lines.push(current);
+    current = [item];
+    currentY = item.y;
+  });
+  if (current.length > 0) {
+    lines.push(current);
+  }
+
+  return lines
+    .map((lineItems) =>
+      lineItems
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.str)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildPayslipReportRows(records, totals, specials, names) {
