@@ -412,50 +412,11 @@ function setBadge(el, ok, text) {
 function refreshUiReadiness() {
   const hasSource = !!state.sourceWorkbook;
   const hasMaster = !!state.masterWorkbook;
-  const hasP3FileA = !!state.p3WorkbookA;
-  const hasP3FileB = !!state.p3WorkbookB;
-  const hasMasterP2 = !!state.masterWorkbookP2;
   const hasPdfs = (ui.payslipFiles.files || []).length > 0;
-  setBadge(
-    ui.statusSource,
-    hasSource,
-    hasSource
-      ? `OK: ${state.sourceWorkbookName} (${state.sourceSheets.length} ark.)`
-      : "Brak pliku source"
-  );
-  setBadge(
-    ui.statusMaster,
-    hasMaster,
-    hasMaster
-      ? `OK: ${state.masterWorkbookName} (${state.masterSheets.length} ark.)`
-      : "Brak pliku master"
-  );
-  setBadge(
-    ui.statusP3FileA,
-    hasP3FileA,
-    hasP3FileA
-      ? `OK: ${state.p3WorkbookAName} (${state.p3SheetsA.length} ark.)`
-      : "Brak pliku A (P3)"
-  );
-  setBadge(
-    ui.statusP3FileB,
-    hasP3FileB,
-    hasP3FileB
-      ? `OK: ${state.p3WorkbookBName} (${state.p3SheetsB.length} ark.)`
-      : "Brak pliku B (P3)"
-  );
-  setBadge(
-    ui.statusMasterP2,
-    hasMasterP2,
-    hasMasterP2
-      ? `OK: ${state.masterWorkbookNameP2} (${state.masterSheetsP2.length} ark.)`
-      : "Opcjonalne"
-  );
-  setBadge(ui.statusPdfs, hasPdfs, hasPdfs ? `OK: ${ui.payslipFiles.files.length} PDF` : "Brak PDF");
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
-  const readyProcess3 = hasP3FileA && hasP3FileB && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
+  const readyProcess3 = !!state.p3WorkbookA && !!state.p3WorkbookB && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
   const p4MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
   const readyProcess4 = hasPdfs && !!p4MasterReady;
   ui.run1.disabled = !readyProcess1;
