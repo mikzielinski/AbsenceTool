@@ -1094,8 +1094,8 @@ function readCollectiveTotals(workbook, sheetName) {
       duplicateIds.add(sap);
       return;
     }
-    totals[sap] = round2(Number((holidayCol && row[holidayCol]) || 0));
-    specials[sap] = round2(Number((specialCol && row[specialCol]) || 0));
+    totals[sap] = holidayCol ? toNumberOrNull(row[holidayCol]) : null;
+    specials[sap] = specialCol ? toNumberOrNull(row[specialCol]) : null;
     if (nameCol && row[nameCol]) {
       names[sap] = String(row[nameCol]).trim();
     }
@@ -1798,6 +1798,14 @@ function round2(value) {
 function toNumberOrNull(value) {
   if (value === null || value === undefined || value === "") {
     return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return round2(value);
+  }
+  // Handles locale formats like 9,56 and 48.779,54.
+  const parsedFlexible = parseFlexibleNum(value);
+  if (parsedFlexible !== null && parsedFlexible !== undefined) {
+    return parsedFlexible;
   }
   const num = Number(String(value).replaceAll(",", "."));
   return Number.isNaN(num) ? null : round2(num);
