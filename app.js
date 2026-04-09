@@ -1026,11 +1026,11 @@ function loadSourceBalanceSummary(rows) {
     throw new Error("Holiday Balance tab is empty.");
   }
   const cols = Object.keys(rows[0]);
-  const idCol = findColumn(cols, ["Holid", "SAP ID", "ID"]);
+  const idCol = findColumn(cols, ["SAP ID"]);
   const nameCol = findColumn(cols, ["Name", "Employee", "Employee Name"]);
-  const totalCol = findColumn(cols, ["Total holidays", "Total holiday balance"]);
+  const totalCol = findColumn(cols, ["Total holidays"]);
   if (!idCol || !totalCol) {
-    throw new Error(`Holiday Balance tab missing required columns. Found: ${cols.join(", ")}`);
+    throw new Error(`File A must contain columns 'SAP ID' and 'Total holidays'. Found: ${cols.join(", ")}`);
   }
   return rows
     .filter((row) => row[idCol] !== null && row[idCol] !== "")
@@ -1054,21 +1054,16 @@ function findColumn(columns, candidates) {
 }
 
 function readCollectiveTotals(workbook, sheetName) {
-  const ws = workbook?.Sheets?.[sheetName];
-  if (!ws) {
-    throw new Error("Master sheet is empty.");
-  }
   const rows = sheetToRows(workbook, sheetName);
   if (rows.length === 0) {
     throw new Error("Master sheet is empty.");
   }
   const header = Object.keys(rows[0]);
-  const holidayCol = findColumnContaining(header, "total holiday balance");
-  const specialCol = findColumnContaining(header, "total special holiday balance");
+  const holidayCol = findColumn(header, ["Total holiday balance"]);
+  const specialCol = findColumn(header, ["Total special holiday balance"]);
   const nameCol = findColumn(header, ["Employee", "Name", "Employee Name"]);
-  const computedTotals = computeTotalsFromMonthColumns(ws);
-  if (!holidayCol && !computedTotals) {
-    throw new Error("Master: 'Total holiday balance' column not found.");
+  if (!holidayCol) {
+    throw new Error(`File B must contain column 'Total holiday balance'. Found: ${header.join(", ")}`);
   }
 
   const totals = {};
@@ -1083,90 +1078,12 @@ function readCollectiveTotals(workbook, sheetName) {
       names[sap] = String(row[nameCol]).trim();
     }
   });
-  // Use column totals from master by default.
-  // Recomputed month totals are fallback only when summary columns are missing.
-  if (computedTotals && !holidayCol) {
-    Object.keys(computedTotals.holidays).forEach((sap) => {
-      totals[sap] = computedTotals.holidays[sap];
-    });
-  }
-  if (computedTotals && !specialCol) {
-    Object.keys(computedTotals.specials).forEach((sap) => {
-      specials[sap] = computedTotals.specials[sap];
-    });
-  }
   return { totals, specials, names };
 }
 
 function findColumnContaining(columns, fragment) {
   const f = fragment.toLowerCase();
   return columns.find((col) => String(col).toLowerCase().includes(f)) || null;
-}
-
-function computeTotalsFromMonthColumns(ws) {
-  if (!ws || !ws["!ref"]) {
-    return null;
-  }
-  const range = XLSX.utils.decode_range(ws["!ref"]);
-  const monthPairs = collectMonthPairColumns(ws, range);
-  if (monthPairs.length === 0) {
-    return null;
-  }
-
-  const holidays = {};
-  const specials = {};
-  for (let r = 0; r <= range.e.r; r += 1) {
-    const sap = normalizeSap(getWorksheetCellValue(ws, r, 0));
-    if (!sap) {
-      continue;
-    }
-    let holidaySum = 0;
-    let specialSum = 0;
-    let hasAnyValue = false;
-    monthPairs.forEach((pair) => {
-      const holidayValue = toNumberOrNull(getWorksheetCellValue(ws, r, pair.holidayIdx));
-      const specialValue = toNumberOrNull(getWorksheetCellValue(ws, r, pair.specialIdx));
-      if (holidayValue !== null) {
-        holidaySum += holidayValue;
-        hasAnyValue = true;
-      }
-      if (specialValue !== null) {
-        specialSum += specialValue;
-        hasAnyValue = true;
-      }
-    });
-    if (hasAnyValue) {
-      holidays[sap] = round2(holidaySum);
-      specials[sap] = round2(specialSum);
-    }
-  }
-
-  return { holidays, specials };
-}
-
-function collectMonthPairColumns(ws, range) {
-  const pairs = [];
-  const seen = new Set();
-  const maxHeaderRow = Math.min(range.e.r, 4);
-  for (let r = 0; r <= maxHeaderRow; r += 1) {
-    for (let c = 0; c <= range.e.c; c += 1) {
-      const normalized = normalizeMonthCell(ws, r, c);
-      if (!normalized) {
-        continue;
-      }
-      const pair = resolveMonthPairColumns(ws, range, r, c);
-      if (!pair) {
-        continue;
-      }
-      const key = `${pair.holidayIdx}:${pair.specialIdx}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      pairs.push(pair);
-    }
-  }
-  return pairs;
 }
 
 function buildBalanceComparisonRows(srcSummary, totals, names) {
