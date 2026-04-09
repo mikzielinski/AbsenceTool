@@ -26,7 +26,12 @@ const state = {
   sourceSheets: [],
   masterWorkbook: null,
   masterWorkbookName: "",
+  masterWorkbookBytes: null,
   masterSheets: [],
+  masterWorkbookP3: null,
+  masterWorkbookNameP3: "",
+  masterWorkbookBytesP3: null,
+  masterSheetsP3: [],
   masterWorkbookP2: null,
   masterWorkbookNameP2: "",
   masterSheetsP2: [],
@@ -45,6 +50,8 @@ const ui = {
   sourceSheet1b: document.getElementById("sourceSheet1b"),
   masterFile: document.getElementById("masterFile"),
   masterSheet: document.getElementById("masterSheet"),
+  masterFileP3: document.getElementById("masterFileP3"),
+  masterSheetP3: document.getElementById("masterSheetP3"),
   masterFileP2: document.getElementById("masterFileP2"),
   masterSheetP2: document.getElementById("masterSheetP2"),
   payslipFiles: document.getElementById("payslipFiles"),
@@ -56,6 +63,7 @@ const ui = {
   logOutput: document.getElementById("logOutput"),
   statusSource: document.getElementById("sourceStatus"),
   statusMaster: document.getElementById("masterStatus"),
+  statusMasterP3: document.getElementById("masterP3Status"),
   statusMasterP2: document.getElementById("masterP2Status"),
   statusPdfs: document.getElementById("payslipStatus"),
   errorBox: document.getElementById("errorBox"),
@@ -75,6 +83,7 @@ function init() {
   fillSelect(ui.sourceSheet1a, []);
   fillSelect(ui.sourceSheet1b, []);
   fillSelect(ui.masterSheet, []);
+  fillSelect(ui.masterSheetP3, []);
   fillSelect(ui.masterSheetP2, []);
   refreshUiReadiness();
   log("Gotowe. Zrób procesy 1-2-3-4 na ekranie.");
@@ -98,11 +107,13 @@ function bindEvents() {
   ui.tabP3.addEventListener("click", () => setActiveTab("p3"));
   ui.sourceFile.addEventListener("change", onSourceFilePicked);
   ui.masterFile.addEventListener("change", onMasterFilePicked);
+  ui.masterFileP3.addEventListener("change", onMasterFileP3Picked);
   ui.masterFileP2.addEventListener("change", onMasterFileP2Picked);
   ui.payslipFiles.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1a.addEventListener("change", refreshUiReadiness);
   ui.sourceSheet1b.addEventListener("change", refreshUiReadiness);
   ui.masterSheet.addEventListener("change", refreshUiReadiness);
+  ui.masterSheetP3.addEventListener("change", refreshUiReadiness);
   ui.masterSheetP2.addEventListener("change", refreshUiReadiness);
   ui.run1.addEventListener("click", runProcess1);
   ui.run2.addEventListener("click", runProcess2);
@@ -160,17 +171,22 @@ async function onMasterFilePicked(event) {
   if (!file) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterWorkbookBytes = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
+    clearP3MasterSelection();
     hideInlineError();
     refreshUiReadiness();
     return;
   }
   try {
-    state.masterWorkbook = await readWorkbookFromFile(file);
+    const loaded = await readWorkbookBundle(file);
+    state.masterWorkbook = loaded.workbook;
     state.masterWorkbookName = file.name;
+    state.masterWorkbookBytes = loaded.buffer;
     state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
     fillSelect(ui.masterSheet, state.masterSheets);
+    clearP3MasterSelection("Process 3: wybierz ponownie update'owany plik master.");
     hideInlineError();
     log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
     log(`Master sheets: ${state.masterSheets.join(" | ")}`);
@@ -178,9 +194,45 @@ async function onMasterFilePicked(event) {
   } catch (error) {
     state.masterWorkbook = null;
     state.masterWorkbookName = "";
+    state.masterWorkbookBytes = null;
     state.masterSheets = [];
     fillSelect(ui.masterSheet, []);
+    clearP3MasterSelection();
+    refreshUiReadiness();
     showError(`Nie udało się wczytać master file: ${error.message}`);
+  }
+}
+
+async function onMasterFileP3Picked(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    state.masterWorkbookP3 = null;
+    state.masterWorkbookNameP3 = "";
+    state.masterWorkbookBytesP3 = null;
+    state.masterSheetsP3 = [];
+    fillSelect(ui.masterSheetP3, []);
+    hideInlineError();
+    refreshUiReadiness();
+    return;
+  }
+  try {
+    const loaded = await readWorkbookBundle(file);
+    state.masterWorkbookP3 = loaded.workbook;
+    state.masterWorkbookNameP3 = file.name;
+    state.masterWorkbookBytesP3 = loaded.buffer;
+    state.masterSheetsP3 = getWorkbookSheetNames(state.masterWorkbookP3);
+    fillSelect(ui.masterSheetP3, state.masterSheetsP3);
+    hideInlineError();
+    log(`Master (P3) loaded: ${file.name} (${state.masterSheetsP3.length} sheet(s)).`);
+    log(`Master (P3) sheets: ${state.masterSheetsP3.join(" | ")}`);
+    refreshUiReadiness();
+  } catch (error) {
+    state.masterWorkbookP3 = null;
+    state.masterWorkbookNameP3 = "";
+    state.masterWorkbookBytesP3 = null;
+    state.masterSheetsP3 = [];
+    fillSelect(ui.masterSheetP3, []);
+    showError(`Nie udało się wczytać master file (P3): ${error.message}`);
   }
 }
 
@@ -213,6 +265,20 @@ async function onMasterFileP2Picked(event) {
   }
 }
 
+function clearP3MasterSelection(logMessage = "") {
+  state.masterWorkbookP3 = null;
+  state.masterWorkbookNameP3 = "";
+  state.masterWorkbookBytesP3 = null;
+  state.masterSheetsP3 = [];
+  fillSelect(ui.masterSheetP3, []);
+  if (ui.masterFileP3) {
+    ui.masterFileP3.value = "";
+  }
+  if (logMessage) {
+    log(logMessage);
+  }
+}
+
 function fillSelect(selectEl, values) {
   selectEl.innerHTML = "";
   const cleanValues = Array.isArray(values)
@@ -231,6 +297,12 @@ function fillSelect(selectEl, values) {
     option.textContent = name;
     selectEl.appendChild(option);
   });
+}
+
+async function readWorkbookBundle(file) {
+  const buffer = await file.arrayBuffer();
+  const workbook = readWorkbookFromBuffer(buffer);
+  return { workbook, buffer };
 }
 
 async function readWorkbookFromFile(file) {
@@ -310,6 +382,7 @@ function setBadge(el, ok, text) {
 function refreshUiReadiness() {
   const hasSource = !!state.sourceWorkbook;
   const hasMaster = !!state.masterWorkbook;
+  const hasMasterP3 = !!state.masterWorkbookP3;
   const hasMasterP2 = !!state.masterWorkbookP2;
   const hasPdfs = (ui.payslipFiles.files || []).length > 0;
   setBadge(
@@ -327,6 +400,13 @@ function refreshUiReadiness() {
       : "Brak pliku master"
   );
   setBadge(
+    ui.statusMasterP3,
+    hasMasterP3,
+    hasMasterP3
+      ? `OK: ${state.masterWorkbookNameP3} (${state.masterSheetsP3.length} ark.)`
+      : "Brak pliku master P3"
+  );
+  setBadge(
     ui.statusMasterP2,
     hasMasterP2,
     hasMasterP2
@@ -337,7 +417,7 @@ function refreshUiReadiness() {
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
-  const readyProcess3 = hasSource && hasMaster && !!ui.sourceSheet1b.value && !!ui.masterSheet.value;
+  const readyProcess3 = hasSource && hasMasterP3 && !!ui.sourceSheet1b.value && !!ui.masterSheetP3.value;
   const p4MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
   const readyProcess4 = hasPdfs && !!p4MasterReady;
   ui.run1.disabled = !readyProcess1;
@@ -463,10 +543,10 @@ function validateProcess3Inputs() {
   if (!state.sourceWorkbook) {
     throw new Error("Wybierz Current Holiday Report.");
   }
-  if (!state.masterWorkbook) {
-    throw new Error("Wybierz Holiday Balance master file.");
+  if (!state.masterWorkbookP3) {
+    throw new Error("Wybierz update'owany Holiday Balance master file dla Process 3.");
   }
-  if (!ui.sourceSheet1b.value || !ui.masterSheet.value) {
+  if (!ui.sourceSheet1b.value || !ui.masterSheetP3.value) {
     throw new Error("Wybierz wymagane sheety dla Process 3.");
   }
 }
@@ -520,16 +600,31 @@ async function runProcess2() {
       balanceSummaryRows,
       monthLabel
     );
-    applyMasterUpdatePlanToWorkbook(state.masterWorkbook, updatePlan);
+    const outBytes = applyMasterUpdatesViaWorksheetXml(state.masterWorkbookBytes, updatePlan);
+    state.masterWorkbook = readWorkbookFromBuffer(
+      outBytes.buffer.slice(outBytes.byteOffset, outBytes.byteOffset + outBytes.byteLength)
+    );
+    state.masterWorkbookBytes = outBytes.buffer.slice(
+      outBytes.byteOffset,
+      outBytes.byteOffset + outBytes.byteLength
+    );
+    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
+    fillSelect(ui.masterSheet, state.masterSheets);
+    if (state.masterSheets.includes(updatePlan.sheetName)) {
+      ui.masterSheet.value = updatePlan.sheetName;
+    }
     const outName = buildUpdatedMasterName(state.masterWorkbookName, monthLabel);
-    writeWorkbookDownload(state.masterWorkbook, outName);
+    writeBytesDownload(outBytes, outName);
+    clearP3MasterSelection("Process 3: wybierz ponownie pobrany plik master.");
     log(`Master updated (${updatePlan.updates.length} employee(s)).`);
     setResultSummary([
       "Process 2 zakończony.",
       `Master updated row(s): ${updatePlan.updates.length}.`,
-      "Wynik: utworzono nowy plik master po zmianach.",
+      "Wynik: utworzono nowy plik master po zmianach bez ingerencji w formatowanie.",
+      "Process 3: wymagany ponowny wybór update'owanego pliku master.",
       `Pobrany plik: ${outName}.`,
     ]);
+    refreshUiReadiness();
   } catch (error) {
     showError(error.message);
   }
@@ -544,8 +639,8 @@ async function runProcess3() {
       sheetToRows(state.sourceWorkbook, ui.sourceSheet1b.value)
     );
     const { totals, names } = readCollectiveTotals(
-      state.masterWorkbook,
-      ui.masterSheet.value
+      state.masterWorkbookP3,
+      ui.masterSheetP3.value
     );
     const compareRows = buildBalanceComparisonRows(srcSummary, totals, names);
     const outWb = buildBalanceComparisonWorkbook(compareRows);
@@ -572,7 +667,7 @@ function resolveMasterForP2() {
   if (state.masterWorkbook && ui.masterSheet.value) {
     return { wb: state.masterWorkbook, sheet: ui.masterSheet.value };
   }
-  throw new Error("Wybierz master file/sheet dla Process 4 (lub użyj z Process 1-3).");
+  throw new Error("Wybierz master file/sheet dla Process 4 (lub użyj z Process 1-2).");
 }
 
 async function runProcess4() {
@@ -1163,6 +1258,24 @@ function writeWorkbookDownload(workbook, filename) {
   XLSX.writeFile(workbook, ensureXlsxName(filename));
 }
 
+function writeBytesDownload(bytes, filename) {
+  const blob = new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const safeName = ensureXlsxName(filename);
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = safeName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function buildUpdatedMasterName(baseName, monthLabel) {
   const original = String(baseName || "master.xlsx");
   const cleanMonth = String(monthLabel || "")
@@ -1175,6 +1288,295 @@ function buildUpdatedMasterName(baseName, monthLabel) {
     return `${original.slice(0, -5)}-updated${suffix}.xlsx`;
   }
   return `${original}-updated${suffix}.xlsx`;
+}
+
+function applyMasterUpdatesViaWorksheetXml(workbookBytes, updatePlan) {
+  if (!workbookBytes) {
+    throw new Error("Brak oryginalnych danych pliku master do zapisu.");
+  }
+  if (!window.fflate) {
+    throw new Error("Brak biblioteki do bezpiecznego zapisu XLSX (fflate).");
+  }
+  const bytes = new Uint8Array(workbookBytes);
+  const zipped = window.fflate.unzipSync(bytes);
+  const workbookXmlPath = "xl/workbook.xml";
+  const workbookRelsXmlPath = "xl/_rels/workbook.xml.rels";
+  const workbookXml = getZipXml(zipped, workbookXmlPath);
+  const workbookRelsXml = getZipXml(zipped, workbookRelsXmlPath);
+  const sheetFilePath = resolveWorksheetPath(workbookXml, workbookRelsXml, updatePlan.sheetName);
+  const sheetXml = getZipXml(zipped, sheetFilePath);
+  const updatedSheetXml = updateWorksheetXmlValues(sheetXml, updatePlan);
+  zipped[sheetFilePath] = window.fflate.strToU8(updatedSheetXml);
+  return window.fflate.zipSync(zipped, { level: 0 });
+}
+
+function getZipXml(zipped, path) {
+  const u8 = zipped[path];
+  if (!u8) {
+    throw new Error(`Brak pliku '${path}' w archiwum XLSX.`);
+  }
+  return window.fflate.strFromU8(u8);
+}
+
+function resolveWorksheetPath(workbookXml, workbookRelsXml, sheetName) {
+  const wbDoc = new DOMParser().parseFromString(workbookXml, "application/xml");
+  const relDoc = new DOMParser().parseFromString(workbookRelsXml, "application/xml");
+  const workbookSheets = wbDoc.getElementsByTagName("sheet");
+  let relId = "";
+  for (let i = 0; i < workbookSheets.length; i += 1) {
+    const sheet = workbookSheets[i];
+    if (sheet.getAttribute("name") === sheetName) {
+      relId = sheet.getAttribute("r:id") || sheet.getAttributeNS(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "id"
+      ) || "";
+      break;
+    }
+  }
+  if (!relId) {
+    throw new Error(`Nie znaleziono arkusza '${sheetName}' w workbook.xml.`);
+  }
+
+  const relNodes = relDoc.getElementsByTagName("Relationship");
+  let target = "";
+  for (let i = 0; i < relNodes.length; i += 1) {
+    const rel = relNodes[i];
+    if (rel.getAttribute("Id") === relId) {
+      target = rel.getAttribute("Target") || "";
+      break;
+    }
+  }
+  if (!target) {
+    throw new Error(`Nie znaleziono relacji arkusza '${sheetName}' (r:id=${relId}).`);
+  }
+  const clean = target.replace(/^\//, "");
+  if (clean.startsWith("xl/")) {
+    return clean;
+  }
+  return `xl/${clean.replace(/^\.?\//, "")}`;
+}
+
+function updateWorksheetXmlValues(sheetXml, updatePlan) {
+  const doc = new DOMParser().parseFromString(sheetXml, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length > 0) {
+    throw new Error("Nie udało się sparsować XML arkusza master.");
+  }
+  const sheetData = findDirectChildByLocalName(doc.documentElement, "sheetData");
+  if (!sheetData) {
+    throw new Error("Arkusz XLSX nie zawiera sekcji sheetData.");
+  }
+  updatePlan.updates.forEach((update) => {
+    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
+    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
+  });
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${new XMLSerializer().serializeToString(doc)}`;
+}
+
+function setWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
+  const ref = `${columnNumberToName(columnNumber)}${rowNumber}`;
+  const rowNode = getOrCreateWorksheetRow(doc, sheetData, rowNumber);
+  const cellNode = getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber);
+  writeNumericValueToCell(doc, cellNode, value);
+}
+
+function getOrCreateWorksheetRow(doc, sheetData, rowNumber) {
+  const rows = getDirectChildrenByLocalName(sheetData, "row");
+  for (let i = 0; i < rows.length; i += 1) {
+    if (Number(rows[i].getAttribute("r") || 0) === rowNumber) {
+      return rows[i];
+    }
+  }
+  const rowNode = doc.createElementNS(sheetData.namespaceURI, "row");
+  rowNode.setAttribute("r", String(rowNumber));
+  for (let i = 0; i < rows.length; i += 1) {
+    const nextRow = rows[i];
+    if (Number(nextRow.getAttribute("r") || 0) > rowNumber) {
+      sheetData.insertBefore(rowNode, nextRow);
+      return rowNode;
+    }
+  }
+  sheetData.appendChild(rowNode);
+  return rowNode;
+}
+
+function getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  for (let i = 0; i < cells.length; i += 1) {
+    if ((cells[i].getAttribute("r") || "") === ref) {
+      return cells[i];
+    }
+  }
+  const cellNode = doc.createElementNS(rowNode.namespaceURI, "c");
+  cellNode.setAttribute("r", ref);
+  const inferredStyle = inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber);
+  if (inferredStyle) {
+    cellNode.setAttribute("s", inferredStyle);
+  }
+  for (let i = 0; i < cells.length; i += 1) {
+    const current = cells[i];
+    if (compareCellRefs(current.getAttribute("r") || "", ref) > 0) {
+      rowNode.insertBefore(cellNode, current);
+      return cellNode;
+    }
+  }
+  rowNode.appendChild(cellNode);
+  return cellNode;
+}
+
+function inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber) {
+  const fromRow = inferStyleIdFromRow(rowNode, columnNumber);
+  if (fromRow) {
+    return fromRow;
+  }
+  return inferStyleIdFromColumn(sheetData, rowNumber, columnNumber);
+}
+
+function inferStyleIdFromRow(rowNode, columnNumber) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  let bestStyle = "";
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < cells.length; i += 1) {
+    const cell = cells[i];
+    const style = cell.getAttribute("s") || "";
+    if (!style) continue;
+    const ref = cell.getAttribute("r") || "";
+    const col = cellRefToPos(ref).col;
+    if (!col) continue;
+    const distance = Math.abs(col - columnNumber);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStyle = style;
+    }
+  }
+  return bestStyle;
+}
+
+function inferStyleIdFromColumn(sheetData, rowNumber, columnNumber) {
+  const rows = getDirectChildrenByLocalName(sheetData, "row");
+  const colName = columnNumberToName(columnNumber);
+  let bestStyle = "";
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    const r = Number(row.getAttribute("r") || 0);
+    if (!r) continue;
+    const cell = findCellNodeByRef(row, `${colName}${r}`);
+    if (!cell) continue;
+    const style = cell.getAttribute("s") || "";
+    if (!style) continue;
+    const distance = Math.abs(r - rowNumber);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStyle = style;
+      if (distance === 0) {
+        break;
+      }
+    }
+  }
+  return bestStyle;
+}
+
+function writeNumericValueToCell(doc, cellNode, value) {
+  const hasFormula = Boolean(findDirectChildByLocalName(cellNode, "f"));
+  if (value === null || value === undefined || value === "") {
+    if (hasFormula) {
+      const v = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
+      v.textContent = "";
+      return;
+    }
+    removeDirectChildrenByLocalName(cellNode, "v");
+    removeDirectChildrenByLocalName(cellNode, "is");
+    cellNode.removeAttribute("t");
+    return;
+  }
+
+  const numericText = String(Number(value));
+  cellNode.removeAttribute("t");
+  removeDirectChildrenByLocalName(cellNode, "is");
+  const valueNode = getOrCreateDirectChildByLocalName(doc, cellNode, "v");
+  valueNode.textContent = numericText;
+}
+
+function getDirectChildrenByLocalName(parentNode, localName) {
+  const result = [];
+  const children = parentNode?.childNodes || [];
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i];
+    if (child.nodeType === 1 && child.localName === localName) {
+      result.push(child);
+    }
+  }
+  return result;
+}
+
+function findDirectChildByLocalName(parentNode, localName) {
+  const children = parentNode?.childNodes || [];
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i];
+    if (child.nodeType === 1 && child.localName === localName) {
+      return child;
+    }
+  }
+  return null;
+}
+
+function findCellNodeByRef(rowNode, ref) {
+  const cells = getDirectChildrenByLocalName(rowNode, "c");
+  for (let i = 0; i < cells.length; i += 1) {
+    if ((cells[i].getAttribute("r") || "") === ref) {
+      return cells[i];
+    }
+  }
+  return null;
+}
+
+function getOrCreateDirectChildByLocalName(doc, parentNode, localName) {
+  const existing = findDirectChildByLocalName(parentNode, localName);
+  if (existing) {
+    return existing;
+  }
+  const created = doc.createElementNS(parentNode.namespaceURI, localName);
+  parentNode.appendChild(created);
+  return created;
+}
+
+function removeDirectChildrenByLocalName(parentNode, localName) {
+  const children = [...(parentNode?.childNodes || [])];
+  children.forEach((child) => {
+    if (child.nodeType === 1 && child.localName === localName) {
+      parentNode.removeChild(child);
+    }
+  });
+}
+
+function columnNumberToName(columnNumber) {
+  let n = Number(columnNumber);
+  let name = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    name = String.fromCharCode(65 + rem) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name || "A";
+}
+
+function cellRefToPos(ref) {
+  const match = String(ref || "").match(/^([A-Z]+)(\d+)$/);
+  if (!match) return { col: 0, row: 0 };
+  const letters = match[1];
+  const row = Number(match[2]);
+  let col = 0;
+  for (let i = 0; i < letters.length; i += 1) {
+    col = col * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return { col, row };
+}
+
+function compareCellRefs(a, b) {
+  const pa = cellRefToPos(a);
+  const pb = cellRefToPos(b);
+  if (pa.row !== pb.row) return pa.row - pb.row;
+  return pa.col - pb.col;
 }
 
 function ensureXlsxName(name) {
