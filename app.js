@@ -680,6 +680,7 @@ async function runProcess4() {
     const { wb, sheet } = resolveMasterForP2();
     const { totals, specials, names } = readCollectiveTotals(wb, sheet);
     const records = [];
+    const pageDebugRows = [];
     for (const file of pdfFiles) {
       log(`Parsing ${file.name} ...`);
       const { records: fileRecords, pagesTotal, pagesWithText } = await parsePayslipBatch(file);
@@ -687,6 +688,14 @@ async function runProcess4() {
       log(`  pages: ${pagesTotal}, with text: ${pagesWithText}`);
       log(`  ${fileRecords.length} employee record(s).`);
       fileRecords.forEach((rec) => {
+        pageDebugRows.push({
+          File: file.name,
+          Page: rec.page ?? null,
+          "SAP ID / Employee No": rec.sap_id,
+          "Employee Name (payslip)": rec.name || "Unknown",
+          "Holidays total (payslip)": rec.payslip_holidays_total,
+          "Special holidays (payslip)": rec.payslip_special_total,
+        });
         log(
           `  page ${rec.page ?? "?"}: ID=${rec.sap_id}, Name=${rec.name || "Unknown"}, `
           + `Holiday=${rec.payslip_holidays_total ?? "null"}, Special=${rec.payslip_special_total ?? "null"}`
@@ -697,6 +706,23 @@ async function runProcess4() {
     const outWb = buildPayslipReportWorkbook(reconciliationRows);
     const outName = `Payslip reconciliation ${todayIso()}.xlsx`;
     writeWorkbookDownload(outWb, outName);
+    if (pageDebugRows.length > 0) {
+      const debugWb = buildWorkbookFromRows(
+        "Payslip parsed values",
+        [
+          "File",
+          "Page",
+          "SAP ID / Employee No",
+          "Employee Name (payslip)",
+          "Holidays total (payslip)",
+          "Special holidays (payslip)",
+        ],
+        pageDebugRows
+      );
+      const debugName = `Payslip parsed values ${todayIso()}.xlsx`;
+      writeWorkbookDownload(debugWb, debugName);
+      log(`Debug file saved: ${debugName}`);
+    }
     const mismatches = reconciliationRows.filter((row) => !(row.Result && row["Special result"])).length;
     setResultSummary([
       "Process 4 zakończony.",
@@ -1195,7 +1221,7 @@ async function parsePayslipBatch(file) {
 
 function parseEmployeeBlock(text) {
   const sap = extractEmployeeNumber(text);
-  const name = extractEmployeeName(text);
+  const name = extractEmployeeName(text, sap);
   const pHoliday = extractAmountNearLabel(text, [
     /holidays?\s*total/i,
     /total\s*holidays?/i,
@@ -1294,8 +1320,9 @@ function looksLikeEmployeeName(value) {
   return words.length >= 2 && words.join("").length >= 4;
 }
 
-function extractEmployeeName(text) {
+function extractEmployeeName(text, sapId = "") {
   const lines = splitTextLines(text);
+  const targetSap = normalizeSap(sapId);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const direct = line.match(/employee\s*name\s*[:\-]\s*(.+)$/i) || line.match(/^name\s*[:\-]\s*(.+)$/i);
@@ -1310,6 +1337,22 @@ function extractEmployeeName(text) {
     const prev = lines[i - 1] || "";
     if (looksLikeEmployeeName(prev)) {
       return prev.trim();
+    }
+  }
+  if (targetSap) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!line.includes(targetSap)) {
+        continue;
+      }
+      const nameFromPrefix = line.replace(targetSap, "").trim();
+      if (looksLikeEmployeeName(nameFromPrefix)) {
+        return nameFromPrefix;
+      }
+      const prev = lines[i - 1] || "";
+      if (looksLikeEmployeeName(prev)) {
+        return prev.trim();
+      }
     }
   }
   return "Unknown";
