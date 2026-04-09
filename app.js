@@ -1026,11 +1026,11 @@ function loadSourceBalanceSummary(rows) {
     throw new Error("Holiday Balance tab is empty.");
   }
   const cols = Object.keys(rows[0]);
-  const idCol = findColumn(cols, ["SAP ID"]);
+  const idCol = findColumn(cols, ["SAP ID", "Holid", "ID"]);
   const nameCol = findColumn(cols, ["Name", "Employee", "Employee Name"]);
   const totalCol = findColumn(cols, ["Total holidays"]);
   if (!idCol || !totalCol) {
-    throw new Error(`File A must contain columns 'SAP ID' and 'Total holidays'. Found: ${cols.join(", ")}`);
+    throw new Error(`File A must contain columns 'SAP ID' (or 'Holid') and 'Total holidays'. Found: ${cols.join(", ")}`);
   }
   return rows
     .filter((row) => row[idCol] !== null && row[idCol] !== "")
