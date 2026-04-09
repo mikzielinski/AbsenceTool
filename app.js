@@ -358,8 +358,27 @@ function readWorkbookFromBuffer(buffer) {
     throw new Error("Plik nie zawiera żadnych arkuszy lub ma nieobsługiwany format.");
   }
 
+  safeRecalculateWorkbookFormulas(workbook);
   workbook.SheetNames = sheetNames;
   return workbook;
+}
+
+function safeRecalculateWorkbookFormulas(workbook) {
+  try {
+    recalculateWorkbookFormulas(workbook);
+  } catch (error) {
+    log(`(!) Nie udało się przeliczyć formuł po wczytaniu pliku: ${error.message}`);
+  }
+}
+
+function recalculateWorkbookFormulas(workbook) {
+  if (!workbook || typeof workbook !== "object") {
+    return;
+  }
+  if (!window.XLSX_CALC || typeof window.XLSX_CALC !== "function") {
+    return;
+  }
+  window.XLSX_CALC(workbook);
 }
 
 function getWorkbookSheetNames(workbook) {
@@ -1035,6 +1054,10 @@ function findColumn(columns, candidates) {
 }
 
 function readCollectiveTotals(workbook, sheetName) {
+  const ws = workbook?.Sheets?.[sheetName];
+  if (!ws) {
+    throw new Error("Master sheet is empty.");
+  }
   const rows = sheetToRows(workbook, sheetName);
   if (rows.length === 0) {
     throw new Error("Master sheet is empty.");
@@ -1043,7 +1066,8 @@ function readCollectiveTotals(workbook, sheetName) {
   const holidayCol = findColumnContaining(header, "total holiday balance");
   const specialCol = findColumnContaining(header, "total special holiday balance");
   const nameCol = findColumn(header, ["Employee", "Name", "Employee Name"]);
-  if (!holidayCol) {
+  const computedTotals = computeTotalsFromMonthColumns(ws);
+  if (!holidayCol && !computedTotals) {
     throw new Error("Master: 'Total holiday balance' column not found.");
   }
 
@@ -1053,18 +1077,93 @@ function readCollectiveTotals(workbook, sheetName) {
   rows.forEach((row) => {
     const sap = normalizeSap(row[header[0]]);
     if (!sap) return;
-    totals[sap] = round2(Number(row[holidayCol] || 0));
+    totals[sap] = round2(Number((holidayCol && row[holidayCol]) || 0));
     specials[sap] = round2(Number((specialCol && row[specialCol]) || 0));
     if (nameCol && row[nameCol]) {
       names[sap] = String(row[nameCol]).trim();
     }
   });
+  // Prefer totals recomputed from monthly columns to avoid stale cached formula values.
+  if (computedTotals) {
+    Object.keys(computedTotals.holidays).forEach((sap) => {
+      totals[sap] = computedTotals.holidays[sap];
+    });
+    Object.keys(computedTotals.specials).forEach((sap) => {
+      specials[sap] = computedTotals.specials[sap];
+    });
+  }
   return { totals, specials, names };
 }
 
 function findColumnContaining(columns, fragment) {
   const f = fragment.toLowerCase();
   return columns.find((col) => String(col).toLowerCase().includes(f)) || null;
+}
+
+function computeTotalsFromMonthColumns(ws) {
+  if (!ws || !ws["!ref"]) {
+    return null;
+  }
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const monthPairs = collectMonthPairColumns(ws, range);
+  if (monthPairs.length === 0) {
+    return null;
+  }
+
+  const holidays = {};
+  const specials = {};
+  for (let r = 0; r <= range.e.r; r += 1) {
+    const sap = normalizeSap(getWorksheetCellValue(ws, r, 0));
+    if (!sap) {
+      continue;
+    }
+    let holidaySum = 0;
+    let specialSum = 0;
+    let hasAnyValue = false;
+    monthPairs.forEach((pair) => {
+      const holidayValue = toNumberOrNull(getWorksheetCellValue(ws, r, pair.holidayIdx));
+      const specialValue = toNumberOrNull(getWorksheetCellValue(ws, r, pair.specialIdx));
+      if (holidayValue !== null) {
+        holidaySum += holidayValue;
+        hasAnyValue = true;
+      }
+      if (specialValue !== null) {
+        specialSum += specialValue;
+        hasAnyValue = true;
+      }
+    });
+    if (hasAnyValue) {
+      holidays[sap] = round2(holidaySum);
+      specials[sap] = round2(specialSum);
+    }
+  }
+
+  return { holidays, specials };
+}
+
+function collectMonthPairColumns(ws, range) {
+  const pairs = [];
+  const seen = new Set();
+  const maxHeaderRow = Math.min(range.e.r, 4);
+  for (let r = 0; r <= maxHeaderRow; r += 1) {
+    for (let c = 0; c <= range.e.c; c += 1) {
+      const normalized = normalizeMonthCell(ws, r, c);
+      if (!normalized) {
+        continue;
+      }
+      const pair = resolveMonthPairColumns(ws, range, r, c);
+      if (!pair) {
+        continue;
+      }
+      const key = `${pair.holidayIdx}:${pair.specialIdx}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      pairs.push(pair);
+    }
+  }
+  return pairs;
 }
 
 function buildBalanceComparisonRows(srcSummary, totals, names) {
