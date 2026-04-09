@@ -57,8 +57,12 @@
             <span id="sourceStatus" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
-            <span class="status-label">Master Excel (P1-3)</span>
+            <span class="status-label">Master Excel (P1-2)</span>
             <span id="masterStatus" class="status-pill warn">Brak pliku</span>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Master Excel (P3)</span>
+            <span id="masterP3Status" class="status-pill warn">Brak pliku</span>
           </div>
           <div class="status-card">
             <span class="status-label">Master Excel (P4)</span>
@@ -129,8 +133,16 @@
             Wybierz arkusz source dla Process 3 (Holiday Balance)
             <select id="sourceSheet1b"></select>
           </label>
+          <label>
+            Wybierz zaktualizowany plik master dla Process 3
+            <input id="masterFileP3" type="file" accept=".xlsx" />
+          </label>
+          <label>
+            Wybierz arkusz zaktualizowanego mastera dla Process 3
+            <select id="masterSheetP3"></select>
+          </label>
           <p class="hint-plain">
-            Process 3 używa pliku source, pliku master i arkusza master wybranych w zakładce Process 1-2.
+            Process 3 wymaga ponownego wyboru pliku master (użyj pliku wygenerowanego w Process 2).
           </p>
         </fieldset>
 
@@ -143,7 +155,7 @@
         <h3>Process 4</h3>
 
         <fieldset class="form-block">
-          <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1-3)</legend>
+          <legend>Master file (opcjonalnie osobny, inaczej użyje z Process 1-2)</legend>
           <label>
             Wybierz plik master dla Process 4
             <input id="masterFileP2" type="file" accept=".xlsx" />
@@ -180,6 +192,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="./app.js"></script>
 </body>
