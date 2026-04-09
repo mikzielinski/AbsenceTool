@@ -1366,114 +1366,33 @@ function updateWorksheetXmlValues(sheetXml, updatePlan) {
     throw new Error("Arkusz XLSX nie zawiera sekcji sheetData.");
   }
   updatePlan.updates.forEach((update) => {
-    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
-    setWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
+    setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
+    setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
   });
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${new XMLSerializer().serializeToString(doc)}`;
 }
 
-function setWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
+function setExistingWorksheetXmlCellByCoords(doc, sheetData, rowNumber, columnNumber, value) {
   const ref = `${columnNumberToName(columnNumber)}${rowNumber}`;
-  const rowNode = getOrCreateWorksheetRow(doc, sheetData, rowNumber);
-  const cellNode = getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber);
+  const rowNode = findWorksheetXmlRow(sheetData, rowNumber);
+  if (!rowNode) {
+    throw new Error(`Brak wiersza ${rowNumber} w arkuszu master. Zatrzymano zapis, aby nie zmieniać formatowania.`);
+  }
+  const cellNode = findCellNodeByRef(rowNode, ref);
+  if (!cellNode) {
+    throw new Error(`Brak komórki ${ref} w arkuszu master. Zatrzymano zapis, aby nie zmieniać formatowania.`);
+  }
   writeNumericValueToCell(doc, cellNode, value);
 }
 
-function getOrCreateWorksheetRow(doc, sheetData, rowNumber) {
+function findWorksheetXmlRow(sheetData, rowNumber) {
   const rows = getDirectChildrenByLocalName(sheetData, "row");
   for (let i = 0; i < rows.length; i += 1) {
     if (Number(rows[i].getAttribute("r") || 0) === rowNumber) {
       return rows[i];
     }
   }
-  const rowNode = doc.createElementNS(sheetData.namespaceURI, "row");
-  rowNode.setAttribute("r", String(rowNumber));
-  for (let i = 0; i < rows.length; i += 1) {
-    const nextRow = rows[i];
-    if (Number(nextRow.getAttribute("r") || 0) > rowNumber) {
-      sheetData.insertBefore(rowNode, nextRow);
-      return rowNode;
-    }
-  }
-  sheetData.appendChild(rowNode);
-  return rowNode;
-}
-
-function getOrCreateWorksheetCell(doc, rowNode, ref, sheetData, rowNumber, columnNumber) {
-  const cells = getDirectChildrenByLocalName(rowNode, "c");
-  for (let i = 0; i < cells.length; i += 1) {
-    if ((cells[i].getAttribute("r") || "") === ref) {
-      return cells[i];
-    }
-  }
-  const cellNode = doc.createElementNS(rowNode.namespaceURI, "c");
-  cellNode.setAttribute("r", ref);
-  const inferredStyle = inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber);
-  if (inferredStyle) {
-    cellNode.setAttribute("s", inferredStyle);
-  }
-  for (let i = 0; i < cells.length; i += 1) {
-    const current = cells[i];
-    if (compareCellRefs(current.getAttribute("r") || "", ref) > 0) {
-      rowNode.insertBefore(cellNode, current);
-      return cellNode;
-    }
-  }
-  rowNode.appendChild(cellNode);
-  return cellNode;
-}
-
-function inferStyleIdForNewCell(sheetData, rowNode, rowNumber, columnNumber) {
-  const fromRow = inferStyleIdFromRow(rowNode, columnNumber);
-  if (fromRow) {
-    return fromRow;
-  }
-  return inferStyleIdFromColumn(sheetData, rowNumber, columnNumber);
-}
-
-function inferStyleIdFromRow(rowNode, columnNumber) {
-  const cells = getDirectChildrenByLocalName(rowNode, "c");
-  let bestStyle = "";
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < cells.length; i += 1) {
-    const cell = cells[i];
-    const style = cell.getAttribute("s") || "";
-    if (!style) continue;
-    const ref = cell.getAttribute("r") || "";
-    const col = cellRefToPos(ref).col;
-    if (!col) continue;
-    const distance = Math.abs(col - columnNumber);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestStyle = style;
-    }
-  }
-  return bestStyle;
-}
-
-function inferStyleIdFromColumn(sheetData, rowNumber, columnNumber) {
-  const rows = getDirectChildrenByLocalName(sheetData, "row");
-  const colName = columnNumberToName(columnNumber);
-  let bestStyle = "";
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i];
-    const r = Number(row.getAttribute("r") || 0);
-    if (!r) continue;
-    const cell = findCellNodeByRef(row, `${colName}${r}`);
-    if (!cell) continue;
-    const style = cell.getAttribute("s") || "";
-    if (!style) continue;
-    const distance = Math.abs(r - rowNumber);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestStyle = style;
-      if (distance === 0) {
-        break;
-      }
-    }
-  }
-  return bestStyle;
+  return null;
 }
 
 function writeNumericValueToCell(doc, cellNode, value) {
@@ -1558,25 +1477,6 @@ function columnNumberToName(columnNumber) {
     n = Math.floor((n - 1) / 26);
   }
   return name || "A";
-}
-
-function cellRefToPos(ref) {
-  const match = String(ref || "").match(/^([A-Z]+)(\d+)$/);
-  if (!match) return { col: 0, row: 0 };
-  const letters = match[1];
-  const row = Number(match[2]);
-  let col = 0;
-  for (let i = 0; i < letters.length; i += 1) {
-    col = col * 26 + (letters.charCodeAt(i) - 64);
-  }
-  return { col, row };
-}
-
-function compareCellRefs(a, b) {
-  const pa = cellRefToPos(a);
-  const pb = cellRefToPos(b);
-  if (pa.row !== pb.row) return pa.row - pb.row;
-  return pa.col - pb.col;
 }
 
 function ensureXlsxName(name) {
