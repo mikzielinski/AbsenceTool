@@ -1463,10 +1463,12 @@ function applyMasterUpdatesViaWorksheetXml(workbookBytes, updatePlan) {
   const workbookXmlPath = "xl/workbook.xml";
   const workbookRelsXmlPath = "xl/_rels/workbook.xml.rels";
   const workbookXml = getZipXml(zipped, workbookXmlPath);
+  const updatedWorkbookXml = ensureWorkbookFullRecalcOnLoad(workbookXml);
   const workbookRelsXml = getZipXml(zipped, workbookRelsXmlPath);
   const sheetFilePath = resolveWorksheetPath(workbookXml, workbookRelsXml, updatePlan.sheetName);
   const sheetXml = getZipXml(zipped, sheetFilePath);
   const updatedSheetXml = updateWorksheetXmlValues(sheetXml, updatePlan);
+  zipped[workbookXmlPath] = window.fflate.strToU8(updatedWorkbookXml);
   zipped[sheetFilePath] = window.fflate.strToU8(updatedSheetXml);
   return window.fflate.zipSync(zipped, { level: 0 });
 }
@@ -1515,6 +1517,28 @@ function resolveWorksheetPath(workbookXml, workbookRelsXml, sheetName) {
     return clean;
   }
   return `xl/${clean.replace(/^\.?\//, "")}`;
+}
+
+function ensureWorkbookFullRecalcOnLoad(workbookXml) {
+  const doc = new DOMParser().parseFromString(workbookXml, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length > 0) {
+    throw new Error("Nie udało się sparsować workbook.xml.");
+  }
+  const root = doc.documentElement;
+  if (!root || root.localName !== "workbook") {
+    throw new Error("Niepoprawna struktura workbook.xml.");
+  }
+  const calcPr = findDirectChildByLocalName(root, "calcPr")
+    || getOrCreateDirectChildByLocalName(doc, root, "calcPr");
+  calcPr.setAttribute("calcMode", "auto");
+  calcPr.setAttribute("fullCalcOnLoad", "1");
+  calcPr.setAttribute("forceFullCalc", "1");
+
+  const serialized = new XMLSerializer().serializeToString(doc);
+  if (serialized.startsWith("<?xml")) {
+    return serialized;
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${serialized}`;
 }
 
 function updateWorksheetXmlValues(sheetXml, updatePlan) {
