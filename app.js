@@ -413,11 +413,12 @@ function refreshUiReadiness() {
   const hasSource = !!state.sourceWorkbook;
   const hasMaster = !!state.masterWorkbook;
   const hasPdfs = (ui.payslipFiles.files || []).length > 0;
+  const hasMasterP4 = !!state.masterWorkbookP2;
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
   const readyProcess3 = !!state.p3WorkbookA && !!state.p3WorkbookB && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
-  const p4MasterReady = (state.masterWorkbookP2 && ui.masterSheetP2.value) || (hasMaster && ui.masterSheet.value);
+  const p4MasterReady = hasMasterP4 && !!ui.masterSheetP2.value;
   const readyProcess4 = hasPdfs && !!p4MasterReady;
   ui.run1.disabled = !readyProcess1;
   ui.run2.disabled = !readyProcess2;
@@ -663,10 +664,7 @@ function resolveMasterForP2() {
   if (state.masterWorkbookP2 && ui.masterSheetP2.value) {
     return { wb: state.masterWorkbookP2, sheet: ui.masterSheetP2.value };
   }
-  if (state.masterWorkbook && ui.masterSheet.value) {
-    return { wb: state.masterWorkbook, sheet: ui.masterSheet.value };
-  }
-  throw new Error("Wybierz master file/sheet dla Process 4 (lub użyj z Process 1-2).");
+  throw new Error("Wybierz osobny master file i sheet dla Process 4.");
 }
 
 async function runProcess4() {
