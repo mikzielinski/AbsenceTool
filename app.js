@@ -635,14 +635,69 @@ async function runProcess3() {
   try {
     validateProcess3Inputs();
     log("=== Process 3 ===");
-    const srcSummary = loadSourceBalanceSummary(
-      sheetToRows(state.p3WorkbookA, ui.p3SheetA.value)
-    );
-    const { totals, names } = readCollectiveTotals(
-      state.p3WorkbookB,
-      ui.p3SheetB.value
-    );
-    const compareRows = buildBalanceComparisonRows(srcSummary, totals, names);
+
+    // Always read both files completely fresh from the file input elements.
+    // No in-memory state is used — each run is fully independent.
+    const fileA = ui.p3FileA.files && ui.p3FileA.files[0];
+    const fileB = ui.p3FileB.files && ui.p3FileB.files[0];
+    if (!fileA) throw new Error("Wybierz plik A dla Process 3.");
+    if (!fileB) throw new Error("Wybierz plik B dla Process 3.");
+
+    const sheetA = ui.p3SheetA.value;
+    const sheetB = ui.p3SheetB.value;
+    if (!sheetA) throw new Error("Wybierz arkusz z pliku A.");
+    if (!sheetB) throw new Error("Wybierz arkusz z pliku B.");
+
+    log(`Plik A: ${fileA.name} / arkusz: ${sheetA}`);
+    log(`Plik B: ${fileB.name} / arkusz: ${sheetB}`);
+
+    // Read plik A via raw XML to bypass xlsx.js formula cache.
+    // We need column "Total holidays" — exact cell values, not cached formulas.
+    log("Czytam plik A (raw XML)...");
+    const bufA = await fileA.arrayBuffer();
+    const srcSummary = await readSheetColumnsDirect(bufA, sheetA, {
+      idCandidates:    ["SAP ID", "Holid", "ID"],
+      nameCandidates:  ["Name", "Employee", "Employee Name"],
+      valueCandidates: ["Total holidays"],
+      valueLabel:      "Total holidays",
+    });
+    log(`  Plik A: ${srcSummary.length} rekordów.`);
+    srcSummary.forEach((r) => log(`  ID=${r["SAP ID"]} | Total holidays=${r["Total holidays"]}`));
+
+    // Read plik B via raw XML — column "Total holiday balance".
+    log("Czytam plik B (raw XML)...");
+    const bufB = await fileB.arrayBuffer();
+    const masterSummary = await readSheetColumnsDirect(bufB, sheetB, {
+      idCandidates:    ["SAP ID", "ID", "Holid"],
+      nameCandidates:  ["Employee", "Name", "Employee Name"],
+      valueCandidates: ["Total holiday balance"],
+      valueLabel:      "Total holiday balance",
+    });
+    log(`  Plik B: ${masterSummary.length} rekordów.`);
+    masterSummary.forEach((r) => log(`  ID=${r["SAP ID"]} | Total holiday balance=${r["Total holiday balance"]}`));
+
+    // Build lookup from plik B
+    const masterById = {};
+    const nameById   = {};
+    masterSummary.forEach((r) => {
+      masterById[r["SAP ID"]] = r["Total holiday balance"];
+      if (r["Employee Name"]) nameById[r["SAP ID"]] = r["Employee Name"];
+    });
+
+    // Compare
+    const compareRows = srcSummary.map((rec) => {
+      const sap = rec["SAP ID"];
+      const src = rec["Total holidays"];
+      const mst = masterById[sap] !== undefined ? masterById[sap] : null;
+      return {
+        "SAP ID":                          sap,
+        "Employee Name":                   rec["Employee Name"] || nameById[sap] || sap,
+        "Total holidays (source)":         src,
+        "Total holiday balance (master)":  mst,
+        Match: src !== null && mst !== null ? round2(src) === round2(mst) : false,
+      };
+    });
+
     const outWb = buildBalanceComparisonWorkbook(compareRows);
     const outName = `Balance comparison ${todayIso()}.xlsx`;
     writeWorkbookDownload(outWb, outName);
@@ -654,7 +709,7 @@ async function runProcess3() {
       `Mismatched: ${mismatch}.`,
       `Pobrany plik: ${outName}.`,
     ]);
-    log(`Comparison completed. Mismatch(es): ${mismatch}.`);
+    log(`Gotowe. Niezgodności: ${mismatch}.`);
   } catch (error) {
     showError(error.message);
   }
@@ -680,24 +735,40 @@ async function runProcess4() {
     const masterSheet = ui.masterSheetP2.value;
     if (!masterSheet) throw new Error("Wybierz arkusz mastera dla Process 4.");
 
-    log(`Reading master: ${state.masterWorkbookNameP2} / ${masterSheet}`);
-    // Re-read from the raw bytes to avoid any stale in-memory state
-    const masterFileInput = ui.masterFileP2;
-    const masterFile = masterFileInput.files && masterFileInput.files[0];
-    let freshWb;
-    if (masterFile) {
-      freshWb = await readWorkbookFromFile(masterFile);
-      log(`  Fresh read from disk: ${masterFile.name}`);
-    } else {
-      // Fallback to state if file ref lost (e.g. tab switch)
-      freshWb = state.masterWorkbookP2;
-      log(`  Using in-memory workbook (re-pick file if values look stale)`);
-    }
+    // Always read master completely fresh via raw XML — no in-memory state used.
+    const masterFileEl = ui.masterFileP2;
+    const masterFile   = masterFileEl.files && masterFileEl.files[0];
+    if (!masterFile) throw new Error("Wybierz plik master dla Process 4.");
+    log(`Reading master fresh from disk: ${masterFile.name} / ${masterSheet}`);
 
-    const { totals, specials, names } = readCollectiveTotals(freshWb, masterSheet);
+    const masterBuf = await masterFile.arrayBuffer();
+    const holidaySummary = await readSheetColumnsDirect(masterBuf, masterSheet, {
+      idCandidates:    ["SAP ID", "ID", "Holid"],
+      nameCandidates:  ["Employee", "Name", "Employee Name"],
+      valueCandidates: ["Total holiday balance"],
+      valueLabel:      "Total holiday balance",
+    });
+    const specialSummary = await readSheetColumnsDirect(masterBuf, masterSheet, {
+      idCandidates:    ["SAP ID", "ID", "Holid"],
+      nameCandidates:  ["Employee", "Name", "Employee Name"],
+      valueCandidates: ["Total special holiday balance"],
+      valueLabel:      "Total special holiday balance",
+    });
+
+    const totals   = {};
+    const specials = {};
+    const names    = {};
+    holidaySummary.forEach((r) => {
+      totals[r["SAP ID"]] = r["Total holiday balance"];
+      if (r["Employee Name"]) names[r["SAP ID"]] = r["Employee Name"];
+    });
+    specialSummary.forEach((r) => {
+      specials[r["SAP ID"]] = r["Total special holiday balance"];
+    });
+
     log(`  Master records read: ${Object.keys(totals).length}`);
     Object.entries(totals).forEach(([sap, val]) => {
-      log(`  SAP ${sap}: Holiday balance=${val}, Special=${specials[sap] ?? "n/a"}`);
+      log(`  SAP ${sap}: Holiday=${val}, Special=${specials[sap] ?? "n/a"}`);
     });
 
     // Parse payslip PDFs
@@ -1129,6 +1200,183 @@ function readCollectiveTotals(workbook, sheetName) {
 function findColumnContaining(columns, fragment) {
   const f = fragment.toLowerCase();
   return columns.find((col) => String(col).toLowerCase().includes(f)) || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// readSheetColumnsDirect
+//
+// Reads an xlsx file entirely via raw XML (fflate unzip + DOMParser).
+// This bypasses xlsx.js completely and therefore never returns stale cached
+// formula results — it always reads exactly what is stored in the cells.
+//
+// opts:
+//   idCandidates    — header names to try for the SAP ID column (first match wins)
+//   nameCandidates  — header names to try for employee name (optional)
+//   valueCandidates — header names to try for the numeric value column
+//   valueLabel      — key name used in returned objects
+//
+// Returns array of { "SAP ID", "Employee Name", [valueLabel] }
+// ─────────────────────────────────────────────────────────────────────────────
+async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
+  if (!window.fflate) throw new Error("fflate not available.");
+
+  const bytes  = new Uint8Array(arrayBuffer);
+  const zipped = window.fflate.unzipSync(bytes);
+
+  // Read shared strings table (maps integer index → string value)
+  const sharedStrings = parseSharedStrings(zipped);
+
+  // Resolve worksheet path from workbook.xml + rels
+  const wbXml   = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
+  const wbRels  = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
+  const wsPath  = resolveWorksheetPath(wbXml, wbRels, sheetName);
+  const wsBytes = zipped[wsPath];
+  if (!wsBytes) throw new Error(`Sheet file not found: ${wsPath}`);
+  const wsXml = window.fflate.strFromU8(wsBytes);
+
+  const doc = new DOMParser().parseFromString(wsXml, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length > 0)
+    throw new Error(`Cannot parse sheet XML for '${sheetName}'.`);
+
+  const sheetData = findDirectChildByLocalName(doc.documentElement, "sheetData");
+  if (!sheetData) throw new Error(`No sheetData in sheet '${sheetName}'.`);
+
+  const rows = getDirectChildrenByLocalName(sheetData, "row");
+  if (rows.length === 0) throw new Error(`Sheet '${sheetName}' is empty.`);
+
+  // ── Find header row (first row with content) ──
+  const headerCells = getDirectChildrenByLocalName(rows[0], "c");
+  const headerMap   = {};  // colLetter → header text (lowercase)
+  const headerRaw   = {};  // colLetter → original header text
+  headerCells.forEach((cell) => {
+    const ref = cell.getAttribute("r") || "";
+    const col = ref.replace(/[0-9]/g, "");
+    const val = getCellTextValue(cell, sharedStrings);
+    if (val) {
+      headerMap[col] = val.trim().toLowerCase();
+      headerRaw[col] = val.trim();
+    }
+  });
+
+  // ── Match requested columns ──
+  function findCol(candidates) {
+    for (const cand of candidates) {
+      const cl = cand.toLowerCase();
+      for (const [col, hdr] of Object.entries(headerMap)) {
+        if (hdr === cl) return col;
+      }
+    }
+    // Partial match fallback
+    for (const cand of candidates) {
+      const cl = cand.toLowerCase();
+      for (const [col, hdr] of Object.entries(headerMap)) {
+        if (hdr.includes(cl) || cl.includes(hdr)) return col;
+      }
+    }
+    return null;
+  }
+
+  const idCol    = findCol(opts.idCandidates);
+  const nameCol  = findCol(opts.nameCandidates || []);
+  const valueCol = findCol(opts.valueCandidates);
+
+  if (!idCol)
+    throw new Error(
+      `Column not found in '${sheetName}'. Looking for: ${opts.idCandidates.join(", ")}. ` +
+      `Headers found: ${Object.values(headerRaw).join(", ")}`
+    );
+  if (!valueCol)
+    throw new Error(
+      `Column not found in '${sheetName}'. Looking for: ${opts.valueCandidates.join(", ")}. ` +
+      `Headers found: ${Object.values(headerRaw).join(", ")}`
+    );
+
+  // ── Read data rows ──
+  const result = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const cells   = getDirectChildrenByLocalName(rows[i], "c");
+    const cellMap = {};
+    cells.forEach((cell) => {
+      const ref = cell.getAttribute("r") || "";
+      const col = ref.replace(/[0-9]/g, "");
+      cellMap[col] = cell;
+    });
+
+    const idCell  = cellMap[idCol];
+    if (!idCell) continue;
+    const sapRaw  = getCellTextValue(idCell, sharedStrings);
+    const sap     = normalizeSap(sapRaw);
+    if (!sap) continue;
+
+    const valCell = cellMap[valueCol];
+    const valRaw  = valCell ? getCellNumericValue(valCell, sharedStrings) : null;
+
+    const nameCell = nameCol ? cellMap[nameCol] : null;
+    const name     = nameCell ? getCellTextValue(nameCell, sharedStrings) : "";
+
+    const rec = { "SAP ID": sap, "Employee Name": name || "" };
+    rec[opts.valueLabel] = valRaw;
+    result.push(rec);
+  }
+
+  return result;
+}
+
+// Parse xl/sharedStrings.xml into an array of strings
+function parseSharedStrings(zipped) {
+  const ssBytes = zipped["xl/sharedStrings.xml"];
+  if (!ssBytes) return [];
+  const xml = window.fflate.strFromU8(ssBytes);
+  const doc  = new DOMParser().parseFromString(xml, "application/xml");
+  const sis  = doc.getElementsByTagName("si");
+  const arr  = [];
+  for (let i = 0; i < sis.length; i += 1) {
+    // Concatenate all <t> children (handles rich text)
+    const ts = sis[i].getElementsByTagName("t");
+    let str = "";
+    for (let j = 0; j < ts.length; j += 1) str += ts[j].textContent || "";
+    arr.push(str);
+  }
+  return arr;
+}
+
+// Read a cell's display text (shared string or inline string or number as string)
+function getCellTextValue(cellNode, sharedStrings) {
+  const t = cellNode.getAttribute("t");
+  const vNode = findDirectChildByLocalName(cellNode, "v");
+  const v     = vNode ? vNode.textContent : "";
+  if (t === "s") {
+    // shared string index
+    const idx = parseInt(v, 10);
+    return Number.isNaN(idx) ? "" : (sharedStrings[idx] || "");
+  }
+  if (t === "inlineStr") {
+    const is = findDirectChildByLocalName(cellNode, "is");
+    if (is) {
+      const tNodes = is.getElementsByTagName("t");
+      let str = "";
+      for (let i = 0; i < tNodes.length; i += 1) str += tNodes[i].textContent || "";
+      return str;
+    }
+  }
+  return v || "";
+}
+
+// Read a cell's numeric value — prefers <v> (cached result) over formula string.
+// For cells with formulas, <v> is the last calculated result stored by Excel.
+function getCellNumericValue(cellNode, sharedStrings) {
+  const t     = cellNode.getAttribute("t");
+  const vNode = findDirectChildByLocalName(cellNode, "v");
+  const v     = vNode ? vNode.textContent.trim() : "";
+  if (!v) return null;
+  // If cell type is shared string, try to parse as number
+  if (t === "s") {
+    const idx = parseInt(v, 10);
+    const str = Number.isNaN(idx) ? v : (sharedStrings[idx] || v);
+    return parseDanishNumber(str);
+  }
+  const num = Number(v);
+  return Number.isFinite(num) ? round2(num) : parseDanishNumber(v);
 }
 
 function buildBalanceComparisonRows(srcSummary, totals, names) {
