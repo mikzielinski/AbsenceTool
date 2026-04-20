@@ -1147,12 +1147,30 @@ function loadSourceBalanceSummary(rows) {
 }
 
 function findColumn(columns, candidates) {
-  const byLower = new Map(columns.map((c) => [String(c).trim().toLowerCase(), c]));
+  // Normalise all column names (collapse whitespace/newlines)
+  const normalised = columns.map((c) => ({
+    original: c,
+    norm: String(c || "").replace(/[\s\n\r]+/g, " ").trim().toLowerCase(),
+  }));
+
+  // 1. Exact match
   for (const candidate of candidates) {
-    const key = candidate.toLowerCase();
-    if (byLower.has(key)) {
-      return byLower.get(key);
-    }
+    const cl = candidate.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+    const found = normalised.find((n) => n.norm === cl);
+    if (found) return found.original;
+  }
+  // 2. Column header starts with candidate (e.g. "total holidays" → "Total holidays")
+  for (const candidate of candidates) {
+    const cl = candidate.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+    if (cl.length < 6) continue;
+    const found = normalised.find((n) => n.norm.startsWith(cl));
+    if (found) return found.original;
+  }
+  // 3. Candidate starts with column header (short header contained in longer candidate)
+  for (const candidate of candidates) {
+    const cl = candidate.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+    const found = normalised.find((n) => n.norm.length >= 4 && cl.startsWith(n.norm));
+    if (found) return found.original;
   }
   return null;
 }
@@ -1350,35 +1368,70 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
     }
   }
 
-  // ── Find headers (rows 0 and 1 — row 1 may have sub-headers like Holiday/Special) ──
+  // ── Find headers ──
+  // Scan the first few rows; use a row as headers if it looks like a text row
+  // (i.e. the first non-empty cell is a string, not a number).
+  // Also collect a second header row only when it contains pure text sub-labels
+  // (like "Holiday" / "Special") — used by the master file layout.
   const headerMap = {};  // colLetter → lowercase header text
   const headerRaw = {};  // colLetter → original header text
-  // Merge row 0 and row 1 headers (row 1 may refine with Holiday/Special subheaders)
-  [xmlRows[0], xmlRows[1]].filter(Boolean).forEach((row) => {
+
+  function isTextRow(row) {
+    const cells = getDirectChildrenByLocalName(row, "c");
+    for (const cell of cells) {
+      const t = cell.getAttribute("t") || "";
+      const vEl = findDirectChildByLocalName(cell, "v");
+      const v = vEl ? vEl.textContent.trim() : "";
+      if (!v) continue;
+      // If first populated cell is a shared string → text row
+      if (t === "s") return true;
+      // If first populated cell is a plain number → data row
+      if (!t && Number.isFinite(Number(v))) return false;
+      return true;
+    }
+    return false;
+  }
+
+  function addHeaderRow(row) {
     getDirectChildrenByLocalName(row, "c").forEach((cell) => {
       const ref = cell.getAttribute("r") || "";
       const col = ref.replace(/[0-9]/g, "");
       const val = getCellTextValue(cell, sharedStrings);
-      if (val && val.trim()) {
-        headerMap[col] = val.trim().toLowerCase().replace(/\s+/g, " ");
-        headerRaw[col] = val.trim();
+      const norm = (val || "").replace(/[\s\n\r]+/g, " ").trim();
+      if (norm) {
+        headerMap[col] = norm.toLowerCase();
+        headerRaw[col] = norm;
       }
     });
-  });
+  }
+
+  // Always use row 0 as primary headers
+  if (xmlRows[0]) addHeaderRow(xmlRows[0]);
+  // Add row 1 only if it also looks like a text/label row (master subheaders)
+  if (xmlRows[1] && isTextRow(xmlRows[1])) addHeaderRow(xmlRows[1]);
 
   function findCol(candidates) {
-    // Exact match first
+    // 1. Exact match (normalised whitespace)
     for (const cand of candidates) {
-      const cl = cand.toLowerCase().replace(/\s+/g, " ");
+      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr === cl) return col;
       }
     }
-    // Partial match
+    // 2. Header starts with candidate (e.g. "total holidays" matches "Total holidays left")
+    //    — but only if candidate is at least 6 chars to avoid false positives
     for (const cand of candidates) {
-      const cl = cand.toLowerCase().replace(/\s+/g, " ");
+      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+      if (cl.length < 6) continue;
       for (const [col, hdr] of Object.entries(headerMap)) {
-        if (hdr.includes(cl) || cl.includes(hdr)) return col;
+        if (hdr.startsWith(cl)) return col;
+      }
+    }
+    // 3. Candidate starts with header (short header like "holid" contained in longer candidate)
+    for (const cand of candidates) {
+      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+      for (const [col, hdr] of Object.entries(headerMap)) {
+        if (cl.startsWith(hdr) && hdr.length >= 4) return col;
       }
     }
     return null;
@@ -1420,7 +1473,8 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
       sharedStrings
     );
     const sap = normalizeSap(sapRaw);
-    if (!sap || !/^[0-9]+$/.test(sap)) continue;  // skip non-numeric IDs (headers)
+    // Skip rows where ID is not purely numeric (header rows, empty rows)
+    if (!sap || !/^[0-9]+$/.test(sap)) continue;
 
     // Evaluate the value column using formula evaluator
     const valRef = `${valueCol}${rNum}`;
