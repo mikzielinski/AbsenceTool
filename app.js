@@ -204,88 +204,59 @@ async function onMasterFilePicked(event) {
 
 async function onP3FileAPicked(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    state.p3WorkbookA = null;
-    state.p3WorkbookAName = "";
-    state.p3SheetsA = [];
-    fillSelect(ui.p3SheetA, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
+  fillSelect(ui.p3SheetA, []);
+  state.p3WorkbookA = null;
+  if (!file) { refreshUiReadiness(); return; }
   try {
-    state.p3WorkbookA = await readWorkbookFromFile(file);
-    state.p3WorkbookAName = file.name;
-    state.p3SheetsA = getWorkbookSheetNames(state.p3WorkbookA);
-    fillSelect(ui.p3SheetA, state.p3SheetsA);
+    // Only read sheet names (needed for the dropdown) — NOT the full workbook.
+    // The actual data is always read fresh from the file input in runProcess3.
+    const wb = await readWorkbookFromFile(file);
+    const sheets = getWorkbookSheetNames(wb);
+    state.p3WorkbookA = wb;  // kept only so validateProcess3Inputs can check sheet list
+    fillSelect(ui.p3SheetA, sheets);
     hideInlineError();
-    log(`Process 3 - Plik A loaded: ${file.name} (${state.p3SheetsA.length} sheet(s)).`);
-    log(`Process 3 - Plik A sheets: ${state.p3SheetsA.join(" | ")}`);
+    log(`Plik A: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    state.p3WorkbookA = null;
-    state.p3WorkbookAName = "";
-    state.p3SheetsA = [];
-    fillSelect(ui.p3SheetA, []);
-    showError(`Nie udało się wczytać pliku A (Process 3): ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z pliku A: ${error.message}`);
   }
 }
 
 async function onP3FileBPicked(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    state.p3WorkbookB = null;
-    state.p3WorkbookBName = "";
-    state.p3SheetsB = [];
-    fillSelect(ui.p3SheetB, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
+  fillSelect(ui.p3SheetB, []);
+  state.p3WorkbookB = null;
+  if (!file) { refreshUiReadiness(); return; }
   try {
-    state.p3WorkbookB = await readWorkbookFromFile(file);
-    state.p3WorkbookBName = file.name;
-    state.p3SheetsB = getWorkbookSheetNames(state.p3WorkbookB);
-    fillSelect(ui.p3SheetB, state.p3SheetsB);
+    const wb = await readWorkbookFromFile(file);
+    const sheets = getWorkbookSheetNames(wb);
+    state.p3WorkbookB = wb;  // kept only so validateProcess3Inputs can check sheet list
+    fillSelect(ui.p3SheetB, sheets);
     hideInlineError();
-    log(`Process 3 - Plik B loaded: ${file.name} (${state.p3SheetsB.length} sheet(s)).`);
-    log(`Process 3 - Plik B sheets: ${state.p3SheetsB.join(" | ")}`);
+    log(`Plik B: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    state.p3WorkbookB = null;
-    state.p3WorkbookBName = "";
-    state.p3SheetsB = [];
-    fillSelect(ui.p3SheetB, []);
-    showError(`Nie udało się wczytać pliku B (Process 3): ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z pliku B: ${error.message}`);
   }
 }
 
 async function onMasterFileP2Picked(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    state.masterWorkbookP2 = null;
-    state.masterWorkbookNameP2 = "";
-    state.masterSheetsP2 = [];
-    fillSelect(ui.masterSheetP2, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
+  fillSelect(ui.masterSheetP2, []);
+  state.masterWorkbookP2 = null;
+  if (!file) { refreshUiReadiness(); return; }
   try {
-    state.masterWorkbookP2 = await readWorkbookFromFile(file);
-    state.masterWorkbookNameP2 = file.name;
-    state.masterSheetsP2 = getWorkbookSheetNames(state.masterWorkbookP2);
-    fillSelect(ui.masterSheetP2, state.masterSheetsP2);
+    // Only read sheet names for the dropdown.
+    // runProcess4 always re-reads the file fresh from the input.
+    const wb = await readWorkbookFromFile(file);
+    const sheets = getWorkbookSheetNames(wb);
+    state.masterWorkbookP2 = wb;
+    fillSelect(ui.masterSheetP2, sheets);
     hideInlineError();
-    log(`Master (P4) loaded: ${file.name} (${state.masterSheetsP2.length} sheet(s)).`);
-    log(`Master (P4) sheets: ${state.masterSheetsP2.join(" | ")}`);
+    log(`Master P4: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    state.masterWorkbookP2 = null;
-    state.masterWorkbookNameP2 = "";
-    state.masterSheetsP2 = [];
-    fillSelect(ui.masterSheetP2, []);
-    showError(`Nie udało się wczytać master file (P4): ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z master P4: ${error.message}`);
   }
 }
 
@@ -417,8 +388,8 @@ function refreshUiReadiness() {
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
-  const readyProcess3 = !!state.p3WorkbookA && !!state.p3WorkbookB && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
-  const p4MasterReady = hasMasterP4 && !!ui.masterSheetP2.value;
+  const readyProcess3 = !!(ui.p3FileA.files && ui.p3FileA.files[0]) && !!(ui.p3FileB.files && ui.p3FileB.files[0]) && !!ui.p3SheetA.value && !!ui.p3SheetB.value;
+  const p4MasterReady = !!(ui.masterFileP2.files && ui.masterFileP2.files[0]) && !!ui.masterSheetP2.value;
   const readyProcess4 = hasPdfs && !!p4MasterReady;
   ui.run1.disabled = !readyProcess1;
   ui.run2.disabled = !readyProcess2;
@@ -540,10 +511,10 @@ function validateProcess2Inputs() {
 }
 
 function validateProcess3Inputs() {
-  if (!state.p3WorkbookA) {
+  if (!ui.p3FileA.files || !ui.p3FileA.files[0]) {
     throw new Error("Wybierz plik A dla Process 3.");
   }
-  if (!state.p3WorkbookB) {
+  if (!ui.p3FileB.files || !ui.p3FileB.files[0]) {
     throw new Error("Wybierz plik B dla Process 3.");
   }
   if (!ui.p3SheetA.value || !ui.p3SheetB.value) {
