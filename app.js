@@ -1205,17 +1205,13 @@ function findColumnContaining(columns, fragment) {
 // ─────────────────────────────────────────────────────────────────────────────
 // readSheetColumnsDirect
 //
-// Reads an xlsx file entirely via raw XML (fflate unzip + DOMParser).
-// This bypasses xlsx.js completely and therefore never returns stale cached
-// formula results — it always reads exactly what is stored in the cells.
+// Reads an xlsx file via raw XML, builds a full in-memory cell map for the
+// sheet, then EVALUATES simple arithmetic formulas (like AJ = D+E-AG-AH-AI)
+// instead of relying on the cached <v> values which go stale after Process 2
+// writes new month values without Excel recalculating.
 //
-// opts:
-//   idCandidates    — header names to try for the SAP ID column (first match wins)
-//   nameCandidates  — header names to try for employee name (optional)
-//   valueCandidates — header names to try for the numeric value column
-//   valueLabel      — key name used in returned objects
-//
-// Returns array of { "SAP ID", "Employee Name", [valueLabel] }
+// Supports formulas of the form: =A1+B1-C1+D1*2.08 (add/subtract/multiply
+// of cell refs and numeric literals) — sufficient for this workbook.
 // ─────────────────────────────────────────────────────────────────────────────
 async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   if (!window.fflate) throw new Error("fflate not available.");
@@ -1223,13 +1219,11 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   const bytes  = new Uint8Array(arrayBuffer);
   const zipped = window.fflate.unzipSync(bytes);
 
-  // Read shared strings table (maps integer index → string value)
   const sharedStrings = parseSharedStrings(zipped);
 
-  // Resolve worksheet path from workbook.xml + rels
-  const wbXml   = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
-  const wbRels  = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
-  const wsPath  = resolveWorksheetPath(wbXml, wbRels, sheetName);
+  const wbXml  = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
+  const wbRels = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
+  const wsPath = resolveWorksheetPath(wbXml, wbRels, sheetName);
   const wsBytes = zipped[wsPath];
   if (!wsBytes) throw new Error(`Sheet file not found: ${wsPath}`);
   const wsXml = window.fflate.strFromU8(wsBytes);
@@ -1241,34 +1235,148 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   const sheetData = findDirectChildByLocalName(doc.documentElement, "sheetData");
   if (!sheetData) throw new Error(`No sheetData in sheet '${sheetName}'.`);
 
-  const rows = getDirectChildrenByLocalName(sheetData, "row");
-  if (rows.length === 0) throw new Error(`Sheet '${sheetName}' is empty.`);
+  const xmlRows = getDirectChildrenByLocalName(sheetData, "row");
+  if (xmlRows.length === 0) throw new Error(`Sheet '${sheetName}' is empty.`);
 
-  // ── Find header row (first row with content) ──
-  const headerCells = getDirectChildrenByLocalName(rows[0], "c");
-  const headerMap   = {};  // colLetter → header text (lowercase)
-  const headerRaw   = {};  // colLetter → original header text
-  headerCells.forEach((cell) => {
-    const ref = cell.getAttribute("r") || "";
-    const col = ref.replace(/[0-9]/g, "");
-    const val = getCellTextValue(cell, sharedStrings);
-    if (val) {
-      headerMap[col] = val.trim().toLowerCase();
-      headerRaw[col] = val.trim();
-    }
+  // ── Build full cell map: ref → { rawValue, formula, type } ──
+  // rawValue = numeric value stored in <v> (may be stale for formula cells)
+  // formula  = formula string from <f> (if present)
+  const cellMap = {};  // "A3" → { raw: number|null, formula: string|null, type: string }
+  xmlRows.forEach((row) => {
+    getDirectChildrenByLocalName(row, "c").forEach((cell) => {
+      const ref  = cell.getAttribute("r") || "";
+      const type = cell.getAttribute("t") || "";
+      const vEl  = findDirectChildByLocalName(cell, "v");
+      const fEl  = findDirectChildByLocalName(cell, "f");
+      const vTxt = vEl ? vEl.textContent.trim() : "";
+      const fTxt = fEl ? fEl.textContent.trim() : "";
+
+      let raw = null;
+      if (type === "s") {
+        // shared string — store the text, not a number
+        const idx = parseInt(vTxt, 10);
+        raw = Number.isNaN(idx) ? null : (sharedStrings[idx] || null);
+      } else if (vTxt !== "") {
+        const n = Number(vTxt);
+        raw = Number.isFinite(n) ? n : null;
+      }
+
+      cellMap[ref] = { raw, formula: fTxt || null, type };
+    });
   });
 
-  // ── Match requested columns ──
+  // ── Formula evaluator ──
+  // Evaluates simple formulas: cell refs, +, -, *, numeric literals.
+  // Cross-sheet refs (Sheet!Cell) resolve to the cached <v> value only.
+  // For same-sheet cells we recurse so freshly-written values propagate.
+  const evalCache = {};
+  function evalCell(ref) {
+    if (ref in evalCache) return evalCache[ref];
+    const cell = cellMap[ref];
+    // Missing or empty cell: Excel treats as 0 in arithmetic — so do we
+    if (!cell) { evalCache[ref] = 0; return 0; }
+
+    if (!cell.formula) {
+      // Plain value — strings (shared string headers etc.) return 0 in numeric context
+      const val = typeof cell.raw === "number" ? cell.raw : 0;
+      evalCache[ref] = val;
+      return val;
+    }
+
+    // Has a formula — evaluate it
+    const result = evalFormula(cell.formula, ref);
+    // If formula evaluation fails, fall back to cached <v> if available
+    if (result === null && typeof cell.raw === "number") {
+      evalCache[ref] = cell.raw;
+      return cell.raw;
+    }
+    evalCache[ref] = result !== null ? result : 0;
+    return evalCache[ref];
+  }
+
+  function evalFormula(formula, selfRef) {
+    // Strip leading = if present
+    let f = formula.startsWith("=") ? formula.slice(1) : formula;
+
+    // Cross-sheet refs like 'Sheet name'!AB3 cannot be resolved without reading
+    // that sheet. Use the cached <v> of the CURRENT cell (selfRef) as the value
+    // for the whole formula — this is the last value Excel calculated and is
+    // correct for cells like D3 whose formula is entirely a cross-sheet link.
+    const selfCell = cellMap[selfRef];
+    const hasCrossSheet = /'[^']*'![A-Z]+[0-9]+/.test(f) ||
+                          /[A-Za-z_][A-Za-z0-9_]*![A-Z]+[0-9]+/.test(f);
+    if (hasCrossSheet) {
+      // If the entire formula is just a cross-sheet ref, return the cached value
+      const stripped = f.replace(/'[^']*'![A-Z]+[0-9]+/g, "XREF")
+                        .replace(/[A-Za-z_][A-Za-z0-9_]*![A-Z]+[0-9]+/g, "XREF")
+                        .trim();
+      if (stripped === "XREF" && selfCell && typeof selfCell.raw === "number") {
+        return selfCell.raw;
+      }
+      // Mixed formula (cross-sheet + same-sheet refs): substitute cross-sheet
+      // parts with their raw cached value from the self cell is not possible —
+      // use raw cached value of the specific cross-sheet target cell if it exists
+      // in cellMap (unlikely), otherwise fall back to selfCell.raw for the whole expr
+      f = f.replace(/'[^']*'![A-Z]+[0-9]+/g, (match) => {
+        const targetRef = match.split("!").pop();
+        const targetCell = cellMap[targetRef];
+        if (targetCell && typeof targetCell.raw === "number") return String(targetCell.raw);
+        return selfCell && typeof selfCell.raw === "number" ? String(selfCell.raw) : "0";
+      });
+      f = f.replace(/[A-Za-z_][A-Za-z0-9_]*![A-Z]+[0-9]+/g, (match) => {
+        const targetRef = match.split("!").pop();
+        const targetCell = cellMap[targetRef];
+        if (targetCell && typeof targetCell.raw === "number") return String(targetCell.raw);
+        return selfCell && typeof selfCell.raw === "number" ? String(selfCell.raw) : "0";
+      });
+    }
+
+    // Replace same-sheet cell refs with evaluated values
+    f = f.replace(/([A-Z]{1,3}[0-9]+)/g, (match) => {
+      if (match === selfRef) return "0"; // avoid self-reference loop
+      const val = evalCell(match);
+      return val !== null ? String(val) : "0";
+    });
+
+    // Now f should be a pure arithmetic expression — evaluate safely
+    try {
+      // Only allow digits, operators, dots, spaces, parentheses
+      if (!/^[\d\s+\-*/().]+$/.test(f)) return null;
+      // eslint-disable-next-line no-new-func
+      const result = Function(`"use strict"; return (${f});`)();
+      return Number.isFinite(result) ? round2(result) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Find headers (rows 0 and 1 — row 1 may have sub-headers like Holiday/Special) ──
+  const headerMap = {};  // colLetter → lowercase header text
+  const headerRaw = {};  // colLetter → original header text
+  // Merge row 0 and row 1 headers (row 1 may refine with Holiday/Special subheaders)
+  [xmlRows[0], xmlRows[1]].filter(Boolean).forEach((row) => {
+    getDirectChildrenByLocalName(row, "c").forEach((cell) => {
+      const ref = cell.getAttribute("r") || "";
+      const col = ref.replace(/[0-9]/g, "");
+      const val = getCellTextValue(cell, sharedStrings);
+      if (val && val.trim()) {
+        headerMap[col] = val.trim().toLowerCase().replace(/\s+/g, " ");
+        headerRaw[col] = val.trim();
+      }
+    });
+  });
+
   function findCol(candidates) {
+    // Exact match first
     for (const cand of candidates) {
-      const cl = cand.toLowerCase();
+      const cl = cand.toLowerCase().replace(/\s+/g, " ");
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr === cl) return col;
       }
     }
-    // Partial match fallback
+    // Partial match
     for (const cand of candidates) {
-      const cl = cand.toLowerCase();
+      const cl = cand.toLowerCase().replace(/\s+/g, " ");
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr.includes(cl) || cl.includes(hdr)) return col;
       }
@@ -1282,47 +1390,61 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
 
   if (!idCol)
     throw new Error(
-      `Column not found in '${sheetName}'. Looking for: ${opts.idCandidates.join(", ")}. ` +
-      `Headers found: ${Object.values(headerRaw).join(", ")}`
+      `ID column not found in '${sheetName}'. ` +
+      `Looking for: ${opts.idCandidates.join(", ")}. ` +
+      `Headers: ${Object.values(headerRaw).join(" | ")}`
     );
   if (!valueCol)
     throw new Error(
-      `Column not found in '${sheetName}'. Looking for: ${opts.valueCandidates.join(", ")}. ` +
-      `Headers found: ${Object.values(headerRaw).join(", ")}`
+      `Value column not found in '${sheetName}'. ` +
+      `Looking for: ${opts.valueCandidates.join(", ")}. ` +
+      `Headers: ${Object.values(headerRaw).join(" | ")}`
     );
 
-  // ── Read data rows ──
+  // ── Read data rows (skip header rows) ──
   const result = [];
-  for (let i = 1; i < rows.length; i += 1) {
-    const cells   = getDirectChildrenByLocalName(rows[i], "c");
-    const cellMap = {};
-    cells.forEach((cell) => {
-      const ref = cell.getAttribute("r") || "";
-      const col = ref.replace(/[0-9]/g, "");
-      cellMap[col] = cell;
-    });
+  // Find first data row — skip rows where ID column is not a number
+  for (let i = 0; i < xmlRows.length; i += 1) {
+    const row = xmlRows[i];
+    const rNum = Number(row.getAttribute("r"));
 
-    const idCell  = cellMap[idCol];
+    // Get ID cell
+    const idRef   = `${idCol}${rNum}`;
+    const idCell  = cellMap[idRef];
     if (!idCell) continue;
-    const sapRaw  = getCellTextValue(idCell, sharedStrings);
-    const sap     = normalizeSap(sapRaw);
-    if (!sap) continue;
 
-    const valCell = cellMap[valueCol];
-    const valRaw  = valCell ? getCellNumericValue(valCell, sharedStrings) : null;
+    const sapRaw = getCellTextValue(
+      getDirectChildrenByLocalName(row, "c").find(
+        (c) => (c.getAttribute("r") || "") === idRef
+      ) || {},
+      sharedStrings
+    );
+    const sap = normalizeSap(sapRaw);
+    if (!sap || !/^[0-9]+$/.test(sap)) continue;  // skip non-numeric IDs (headers)
 
-    const nameCell = nameCol ? cellMap[nameCol] : null;
-    const name     = nameCell ? getCellTextValue(nameCell, sharedStrings) : "";
+    // Evaluate the value column using formula evaluator
+    const valRef = `${valueCol}${rNum}`;
+    const val    = evalCell(valRef);
+
+    // Get name
+    let name = "";
+    if (nameCol) {
+      const nameRef = `${nameCol}${rNum}`;
+      const nameXmlCell = getDirectChildrenByLocalName(row, "c").find(
+        (c) => (c.getAttribute("r") || "") === nameRef
+      );
+      if (nameXmlCell) name = getCellTextValue(nameXmlCell, sharedStrings);
+    }
 
     const rec = { "SAP ID": sap, "Employee Name": name || "" };
-    rec[opts.valueLabel] = valRaw;
+    rec[opts.valueLabel] = val;
     result.push(rec);
   }
 
   return result;
 }
 
-// Parse xl/sharedStrings.xml into an array of strings
+// Parse xl/sharedStrings.xml → array of strings
 function parseSharedStrings(zipped) {
   const ssBytes = zipped["xl/sharedStrings.xml"];
   if (!ssBytes) return [];
@@ -1331,7 +1453,6 @@ function parseSharedStrings(zipped) {
   const sis  = doc.getElementsByTagName("si");
   const arr  = [];
   for (let i = 0; i < sis.length; i += 1) {
-    // Concatenate all <t> children (handles rich text)
     const ts = sis[i].getElementsByTagName("t");
     let str = "";
     for (let j = 0; j < ts.length; j += 1) str += ts[j].textContent || "";
@@ -1340,20 +1461,19 @@ function parseSharedStrings(zipped) {
   return arr;
 }
 
-// Read a cell's display text (shared string or inline string or number as string)
 function getCellTextValue(cellNode, sharedStrings) {
-  const t = cellNode.getAttribute("t");
+  if (!cellNode || !cellNode.getAttribute) return "";
+  const t     = cellNode.getAttribute("t") || "";
   const vNode = findDirectChildByLocalName(cellNode, "v");
   const v     = vNode ? vNode.textContent : "";
   if (t === "s") {
-    // shared string index
     const idx = parseInt(v, 10);
     return Number.isNaN(idx) ? "" : (sharedStrings[idx] || "");
   }
   if (t === "inlineStr") {
-    const is = findDirectChildByLocalName(cellNode, "is");
-    if (is) {
-      const tNodes = is.getElementsByTagName("t");
+    const isNode = findDirectChildByLocalName(cellNode, "is");
+    if (isNode) {
+      const tNodes = isNode.getElementsByTagName("t");
       let str = "";
       for (let i = 0; i < tNodes.length; i += 1) str += tNodes[i].textContent || "";
       return str;
@@ -1362,14 +1482,12 @@ function getCellTextValue(cellNode, sharedStrings) {
   return v || "";
 }
 
-// Read a cell's numeric value — prefers <v> (cached result) over formula string.
-// For cells with formulas, <v> is the last calculated result stored by Excel.
 function getCellNumericValue(cellNode, sharedStrings) {
-  const t     = cellNode.getAttribute("t");
+  if (!cellNode || !cellNode.getAttribute) return null;
+  const t     = cellNode.getAttribute("t") || "";
   const vNode = findDirectChildByLocalName(cellNode, "v");
   const v     = vNode ? vNode.textContent.trim() : "";
   if (!v) return null;
-  // If cell type is shared string, try to parse as number
   if (t === "s") {
     const idx = parseInt(v, 10);
     const str = Number.isNaN(idx) ? v : (sharedStrings[idx] || v);
