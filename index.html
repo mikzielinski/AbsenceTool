@@ -3,171 +3,184 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Payroll Process Platform</title>
-  <link rel="stylesheet" href="https://www.qiagen.com/sfc/20260331.122735/fonts.css" />
-  <link rel="stylesheet" href="./styles.css" />
+  <title>Payroll Process Platform – QIAGEN</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f0f4f9; --panel: #ffffff; --text: #1a1b1f; --muted: #5a6478;
+      --primary: #004d9f; --primary-dark: #003575; --accent: #9e002a;
+      --ok: #067647; --warn: #b54708; --danger: #ba1a1a;
+      --border: #cdd5e0; --radius: 10px; --shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    body { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .topbar { background: #fff; border-bottom: 3px solid var(--primary); padding: 10px 24px; display: flex; align-items: center; gap: 14px; }
+    .brand-logo { height: 28px; display: block; }
+    .brand-divider { width: 1px; height: 28px; background: #d0d6e0; }
+    .brand-title h1 { font-size: 1rem; font-weight: 700; color: var(--primary); }
+    .brand-title p  { font-size: 0.78rem; color: var(--muted); margin-top: 1px; }
+    .layout { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 16px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+    .panel h2 { font-size: 1.05rem; color: var(--primary); margin-bottom: 8px; }
+    .panel h3 { font-size: 0.95rem; color: var(--primary); margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .month-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .month-row label { font-weight: 600; font-size: 0.88rem; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .month-row select { padding: 7px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 0.9rem; background: #fff; cursor: pointer; }
+    .hint-inline { font-size: 0.82rem; color: var(--muted); border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; }
+    .tab-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tab-button { padding: 7px 16px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text); font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: background .15s, color .15s; }
+    .tab-button:hover  { background: #e8eef7; }
+    .tab-button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .form-block { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+    .form-block legend { font-size: 0.82rem; color: var(--muted); font-weight: 600; padding: 0 6px; }
+    .field { margin-bottom: 10px; }
+    .field:last-child { margin-bottom: 0; }
+    .field > label { display: block; font-size: 0.82rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+    .file-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .file-row input[type="file"] { flex: 1; min-width: 0; font-size: 0.85rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; background: #f8fafc; cursor: pointer; }
+    .file-row select, select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 0.88rem; background: #fff; cursor: pointer; min-width: 160px; max-width: 100%; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+    .btn-primary { padding: 9px 18px; background: var(--primary); color: #fff; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+    .btn-primary:hover    { background: var(--primary-dark); }
+    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .notice-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 8px; padding: 10px 14px; font-size: 0.88rem; margin-bottom: 12px; }
+    .hint-plain { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
+    .result-summary { font-size: 0.9rem; }
+    .result-summary.empty-state { color: var(--muted); font-style: italic; }
+    .result-summary ul { padding-left: 18px; }
+    .result-summary li { margin: 3px 0; }
+    .log-output { min-height: 180px; max-height: 320px; overflow-y: auto; background: #0b1020; color: #bfdbfe; border-radius: 8px; padding: 12px; font-family: "Consolas", "Courier New", monospace; font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+    .hidden { display: none !important; }
+    @media (max-width: 600px) {
+      .file-row { flex-direction: column; align-items: stretch; }
+      .actions  { flex-direction: column; }
+    }
+  </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand-bar">
-      <div class="brand-logo-wrap">
-        <img
-          class="brand-logo"
-          src="https://www.qiagen.com/sfc/images/qiagen-logo.png"
-          alt="QIAGEN logo"
-        />
-        <span class="brand-wordmark">QIAGEN</span>
-      </div>
-      <div class="brand-title">
-        <h1>Payroll Process Platform</h1>
-        <p>Tool #1: Holiday Balance Tool (wersja web na GitHub Pages)</p>
-      </div>
+
+<header class="topbar">
+  <img class="brand-logo" src="https://www.qiagen.com/sfc/images/qiagen-logo.png" alt="QIAGEN" onerror="this.style.display='none'" />
+  <div class="brand-divider"></div>
+  <div class="brand-title">
+    <h1>Payroll Process Platform</h1>
+    <p>Tool #1: Holiday Balance Tool</p>
+  </div>
+</header>
+
+<main class="layout">
+
+  <article class="panel">
+    <h2>Holiday Balance Tool</h2>
+    <p style="color:var(--muted);font-size:.88rem;margin-bottom:14px;">Wybierz pliki, wybierz arkusze, uruchom wybrany proces. Wyniki pobierają się automatycznie.</p>
+    <div class="month-row">
+      <label>Miesiąc: <select id="monthLabel"></select></label>
+      <span class="hint-inline">Pliki wynikowe zapisują się przez <strong>Download</strong> w przeglądarce.</span>
     </div>
-  </header>
+    <div class="tab-buttons">
+      <button id="tabP1" class="tab-button active" type="button">Process 1 / 2</button>
+      <button id="tabP2" class="tab-button"        type="button">Process 3</button>
+      <button id="tabP3" class="tab-button"        type="button">Process 4</button>
+    </div>
+  </article>
 
-  <main class="layout">
-    <section class="content">
-      <article class="panel">
-        <h2>Holiday Balance Tool</h2>
-        <p>
-          Prosty tryb pracy krok po kroku:
-          najpierw wybierasz pliki, potem uruchamiasz wybrany proces.
-        </p>
-
-        <div class="shared-row">
-          <label>
-            Miesiąc (dla zapisu do mastera)
-            <select id="monthLabel"></select>
-          </label>
-          <div class="hint">
-            Pliki wynikowe zapisują się przez <strong>Download</strong> w przeglądarce.
-          </div>
+  <article id="panelP1" class="panel">
+    <h3>Process 1 / 2</h3>
+    <div id="errorBox" class="notice-error hidden"></div>
+    <fieldset class="form-block">
+      <legend>1) Current Holiday Report Denmark (.xlsx / .xls)</legend>
+      <div class="field">
+        <label>Plik source</label>
+        <div class="file-row">
+          <input id="sourceFile" type="file" accept=".xlsx,.xls" />
+          <select id="sourceSheet1a" title="Arkusz dla Process 1"></select>
         </div>
-
-        <div class="tab-buttons">
-          <button id="tabP1" class="tab-button active" type="button">
-            Process 1-2
-          </button>
-          <button id="tabP2" class="tab-button" type="button">
-            Process 3
-          </button>
-          <button id="tabP3" class="tab-button" type="button">
-            Process 4
-          </button>
+      </div>
+    </fieldset>
+    <fieldset class="form-block">
+      <legend>2) "Holiday Balance" master file (.xlsx)</legend>
+      <div class="field">
+        <label>Plik master</label>
+        <div class="file-row">
+          <input id="masterFile" type="file" accept=".xlsx" />
+          <select id="masterSheet" title="Arkusz master (Sep2025–Aug2026)"></select>
         </div>
-      </article>
+      </div>
+    </fieldset>
+    <p class="hint-plain">Process 2 tworzy <strong>nowy</strong> plik master do pobrania — oryginał nie jest nadpisywany.</p>
+    <div class="actions">
+      <button id="run1" class="btn-primary" type="button">▶ Process 1 — Flexi absence input</button>
+      <button id="run2" class="btn-primary" type="button">▶ Process 2 — Update master</button>
+    </div>
+  </article>
 
-      <article id="panelP1" class="panel">
-        <h3>Process 1 / 2</h3>
-        <div id="errorBox" class="notice error hidden"></div>
-
-        <fieldset class="form-block">
-          <legend>1) Current Holiday Report Denmark (.xlsx / .xls)</legend>
-          <label>
-            Wybierz plik source
-            <input id="sourceFile" type="file" accept=".xlsx,.xls" />
-          </label>
-          <label>
-            Wybierz arkusz dla Process 1 (absence data)
-            <select id="sourceSheet1a"></select>
-          </label>
-        </fieldset>
-
-        <fieldset class="form-block">
-          <legend>2) "Holiday Balance" master file (.xlsx)</legend>
-          <label>
-            Wybierz plik master
-            <input id="masterFile" type="file" accept=".xlsx" />
-          </label>
-          <label>
-            Wybierz arkusz master (Sep2025-Aug2026)
-            <select id="masterSheet"></select>
-          </label>
-        </fieldset>
-
-        <p class="hint-plain">
-          Process 2 tworzy nowy plik master po zmianach (download) i nie nadpisuje oryginału.
-        </p>
-        <div class="actions">
-          <button id="run1" class="primary" type="button">▶ Uruchom Process 1 (stwórz input do Flexi)</button>
-          <button id="run2" class="primary" type="button">▶ Uruchom Process 2 (update master + nowy plik)</button>
+  <article id="panelP2" class="panel hidden">
+    <h3>Process 3 — Porównaj salda</h3>
+    <fieldset class="form-block">
+      <legend>Plik A — Holiday Balance tab (źródło)</legend>
+      <div class="field">
+        <label>Plik A</label>
+        <div class="file-row">
+          <input id="p3FileA" type="file" accept=".xlsx,.xls" />
+          <select id="p3SheetA"></select>
         </div>
-      </article>
-
-      <article id="panelP2" class="panel hidden">
-        <h3>Process 3</h3>
-
-        <fieldset class="form-block">
-          <legend>Wymagane dane dla Process 3</legend>
-          <label>
-            Wybierz plik A dla Process 3
-            <input id="p3FileA" type="file" accept=".xlsx,.xls" />
-          </label>
-          <label>
-            Wybierz arkusz z pliku A
-            <select id="p3SheetA"></select>
-          </label>
-          <label>
-            Wybierz plik B dla Process 3
-            <input id="p3FileB" type="file" accept=".xlsx,.xls" />
-          </label>
-          <label>
-            Wybierz arkusz z pliku B
-            <select id="p3SheetB"></select>
-          </label>
-          <p class="hint-plain">
-            Process 3 porównuje salda pomiędzy dwoma wskazanymi plikami i ich arkuszami.
-          </p>
-        </fieldset>
-
-        <div class="actions">
-          <button id="run3" class="primary" type="button">▶ Uruchom Process 3 (porównaj salda)</button>
+      </div>
+    </fieldset>
+    <fieldset class="form-block">
+      <legend>Plik B — Holiday Balance master (cel)</legend>
+      <div class="field">
+        <label>Plik B</label>
+        <div class="file-row">
+          <input id="p3FileB" type="file" accept=".xlsx,.xls" />
+          <select id="p3SheetB"></select>
         </div>
-      </article>
+      </div>
+    </fieldset>
+    <p class="hint-plain">Porównuje kolumnę <strong>Total holidays</strong> (plik A) z <strong>Total holiday balance</strong> (plik B). Niezgodności zaznaczane są na czerwono.</p>
+    <div class="actions">
+      <button id="run3" class="btn-primary" type="button">▶ Process 3 — Porównaj salda</button>
+    </div>
+  </article>
 
-      <article id="panelP3" class="panel hidden">
-        <h3>Process 4</h3>
-
-        <fieldset class="form-block">
-          <legend>Master file (wymagany osobny plik dla Process 4)</legend>
-          <label>
-            Wybierz plik master dla Process 4
-            <input id="masterFileP2" type="file" accept=".xlsx" />
-          </label>
-          <label>
-            Wybierz arkusz dla Process 4
-            <select id="masterSheetP2"></select>
-          </label>
-        </fieldset>
-
-        <fieldset class="form-block">
-          <legend>Payslip PDFs</legend>
-          <label>
-            Wybierz pliki PDF (jeden lub wiele)
-            <input id="payslipFiles" type="file" accept=".pdf" multiple />
-          </label>
-        </fieldset>
-
-        <div class="actions">
-          <button id="run4" class="primary" type="button">▶ Uruchom Process 4 (porównaj z payslip)</button>
+  <article id="panelP3" class="panel hidden">
+    <h3>Process 4 — Reconciliacja z payslipami</h3>
+    <fieldset class="form-block">
+      <legend>Master file (zaktualizowany — output z Process 2)</legend>
+      <div class="field">
+        <label>Plik master dla Process 4</label>
+        <div class="file-row">
+          <input id="masterFileP2" type="file" accept=".xlsx" />
+          <select id="masterSheetP2"></select>
         </div>
-      </article>
+      </div>
+    </fieldset>
+    <fieldset class="form-block">
+      <legend>Payslip PDFs</legend>
+      <div class="field">
+        <label>Wybierz jeden lub wiele plików PDF</label>
+        <input id="payslipFiles" type="file" accept=".pdf" multiple style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:#f8fafc;" />
+      </div>
+    </fieldset>
+    <p class="hint-plain">Czyta <strong>Total holiday balance</strong> i <strong>Total special holiday balance</strong> bezpośrednio z wybranego pliku master i porównuje z payslipami.</p>
+    <div class="actions">
+      <button id="run4" class="btn-primary" type="button">▶ Process 4 — Porównaj z payslipami</button>
+    </div>
+  </article>
 
-      <article class="panel">
-        <h3>Wynik ostatniego uruchomienia</h3>
-        <div id="resultSummary" class="result-summary empty-state">Brak uruchomień.</div>
-      </article>
+  <article class="panel">
+    <h3>Wynik ostatniego uruchomienia</h3>
+    <div id="resultSummary" class="result-summary empty-state">Brak uruchomień.</div>
+  </article>
 
-      <article class="panel">
-        <h3>Log</h3>
-        <pre id="logOutput" class="log-output"></pre>
-      </article>
-    </section>
-  </main>
+  <article class="panel">
+    <h3>Log</h3>
+    <pre id="logOutput" class="log-output"></pre>
+  </article>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="./app.js"></script>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
