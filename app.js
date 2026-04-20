@@ -1392,65 +1392,70 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   const values = new Map();
   targetTable.forEach((cell, ref) => values.set(ref, cell.raw));
 
-  // ── Rebuild row structure from the sheet XML for header/data reading ──
-  const doc = new DOMParser().parseFromString(wsXml, "application/xml");
-  const sd  = findDirectChildByLocalName(doc.documentElement, "sheetData");
-  const xmlRows = getDirectChildrenByLocalName(sd, "row");
+  // ── Find headers directly from values map ──
+  // Scan refs to find which row numbers exist, sorted ascending
+  const rowNums = Array.from(new Set(
+    Array.from(values.keys()).map((ref) => parseInt(ref.replace(/[A-Z]+/g, ""), 10))
+  )).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
 
-  // ── Find headers ──
-  const headerMap = {};  // colLetter → normalised lowercase
-  const headerRaw = {};  // colLetter → original text
+  const headerMap = {};
+  const headerRaw = {};
 
-  function isTextRow(row) {
-    const cells = getDirectChildrenByLocalName(row, "c");
-    for (const cell of cells) {
-      const t  = cell.getAttribute("t") || "";
-      const vEl = findDirectChildByLocalName(cell, "v");
-      const v  = vEl ? vEl.textContent.trim() : "";
-      if (!v) continue;
-      if (t === "s") return true;
-      if (!t && Number.isFinite(Number(v))) return false;
-      return true;
+  // Read a cell value as text from the values map
+  function cellText(ref) {
+    const v = values.get(ref);
+    return v !== null && v !== undefined ? String(v).trim() : "";
+  }
+
+  // Check if a row looks like a header row (first non-empty cell is text, not a pure number)
+  function isHeaderRow(rNum) {
+    const colKeys = Array.from(values.keys())
+      .filter((ref) => parseInt(ref.replace(/[A-Z]+/g, ""), 10) === rNum)
+      .map((ref) => ref.replace(/[0-9]/g, ""));
+    for (const col of colKeys) {
+      const v = values.get(`${col}${rNum}`);
+      if (v === null || v === undefined) continue;
+      if (typeof v === "string" && v.trim()) return true;
+      if (typeof v === "number") return false;
     }
     return false;
   }
 
-  function addHeaderRow(row) {
-    getDirectChildrenByLocalName(row, "c").forEach((cell) => {
-      const ref = cell.getAttribute("r") || "";
-      const col = ref.replace(/[0-9]/g, "");
-      const val = getCellTextValue(cell, sharedStrings);
-      const norm = (val || "").replace(/[\s\n\r]+/g, " ").trim();
-      if (norm) {
-        headerMap[col] = norm.toLowerCase();
-        headerRaw[col] = norm;
-      }
-    });
+  function addHeaderRowFromValues(rNum) {
+    Array.from(values.keys())
+      .filter((ref) => parseInt(ref.replace(/[A-Z]+/g, ""), 10) === rNum)
+      .forEach((ref) => {
+        const col = ref.replace(/[0-9]/g, "");
+        const val = values.get(ref);
+        if (typeof val !== "string" || !val.trim()) return;
+        const norm = val.replace(/\s+/g, " ").trim();
+        if (norm) {
+          headerMap[col] = norm.toLowerCase();
+          headerRaw[col] = norm;
+        }
+      });
   }
 
-  if (xmlRows[0]) addHeaderRow(xmlRows[0]);
-  if (xmlRows[1] && isTextRow(xmlRows[1])) addHeaderRow(xmlRows[1]);
+  if (rowNums[0]) addHeaderRowFromValues(rowNums[0]);
+  if (rowNums[1] && isHeaderRow(rowNums[1])) addHeaderRowFromValues(rowNums[1]);
 
   // ── Column finder ──
   function findCol(candidates) {
-    // 1. Exact
     for (const cand of candidates) {
-      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+      const cl = cand.toLowerCase().replace(/\s+/g, " ").trim();
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr === cl) return col;
       }
     }
-    // 2. Header starts with candidate
     for (const cand of candidates) {
-      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+      const cl = cand.toLowerCase().replace(/\s+/g, " ").trim();
       if (cl.length < 6) continue;
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr.startsWith(cl)) return col;
       }
     }
-    // 3. Candidate starts with header
     for (const cand of candidates) {
-      const cl = cand.toLowerCase().replace(/[\s\n\r]+/g, " ").trim();
+      const cl = cand.toLowerCase().replace(/\s+/g, " ").trim();
       for (const [col, hdr] of Object.entries(headerMap)) {
         if (hdr.length >= 4 && cl.startsWith(hdr)) return col;
       }
@@ -1475,14 +1480,13 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
       `Headers found: ${Object.values(headerRaw).join(" | ")}`
     );
 
-  // ── Read data rows using the evaluated cell table ──
+  // ── Read data rows from values map ──
   const result = [];
-  xmlRows.forEach((row) => {
-    const rNum = row.getAttribute("r");
+  rowNums.forEach((rNum) => {
     const idRef = `${idCol}${rNum}`;
     const idRaw = values.get(idRef);
     const sap   = normalizeSap(idRaw);
-    if (!sap || !/^[0-9]+$/.test(sap)) return;  // skip header/empty rows
+    if (!sap || !/^[0-9]+$/.test(sap)) return;
 
     const valRef = `${valueCol}${rNum}`;
     const val    = values.get(valRef);
