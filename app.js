@@ -1503,9 +1503,9 @@ function buildBalanceComparisonWorkbook(rows) {
   applyHeaderStyles(ws, headers.length);
   rows.forEach((row, idx) => {
     if (row.Match !== true) {
-      const ref = XLSX.utils.encode_cell({ r: idx + 1, c: 2 });
-      if (!ws[ref]) ws[ref] = { t: "s", v: "" };
-      ws[ref].s = { fill: RED_FILL };
+      for (let c = 0; c < headers.length; c += 1) {
+        markRed(ws, idx + 1, c);
+      }
     }
   });
   autoWidth(ws, wsRows);
@@ -1730,15 +1730,12 @@ function buildPayslipReportWorkbook(rows) {
   applyHeaderStyles(ws, headers.length);
   rows.forEach((row, idx) => {
     const r = idx + 1;
-    if (row.Result !== true) {
-      markRed(ws, r, 2);
-      markRed(ws, r, 3);
-      markRed(ws, r, 4);
-    }
-    if (row["Special result"] !== true) {
-      markRed(ws, r, 5);
-      markRed(ws, r, 6);
-      markRed(ws, r, 7);
+    const anyFalse = row.Result !== true || row["Special result"] !== true;
+    if (anyFalse) {
+      // Highlight entire row when any result is False
+      for (let c = 0; c < headers.length; c += 1) {
+        markRed(ws, r, c);
+      }
     }
   });
   autoWidth(ws, wsRows);
