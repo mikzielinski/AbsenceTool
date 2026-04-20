@@ -141,64 +141,44 @@ function setActiveTab(key) {
 
 async function onSourceFilePicked(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    state.sourceWorkbook = null;
-    state.sourceWorkbookName = "";
-    state.sourceSheets = [];
-    fillSelect(ui.sourceSheet1a, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
+  fillSelect(ui.sourceSheet1a, []);
+  state.sourceWorkbook = null;
+  if (!file) { hideInlineError(); refreshUiReadiness(); return; }
   try {
-    state.sourceWorkbook = await readWorkbookFromFile(file);
+    // Only read sheet names for the dropdown.
+    // runProcess1 and runProcess2 always re-read the file fresh from the input.
+    const wb = await readWorkbookFromFile(file);
+    state.sourceWorkbook = wb;
     state.sourceWorkbookName = file.name;
-    state.sourceSheets = getWorkbookSheetNames(state.sourceWorkbook);
+    state.sourceSheets = getWorkbookSheetNames(wb);
     fillSelect(ui.sourceSheet1a, state.sourceSheets);
     hideInlineError();
-    log(`Source loaded: ${file.name} (${state.sourceSheets.length} sheet(s)).`);
-    log(`Source sheets: ${state.sourceSheets.join(" | ")}`);
+    log(`Source: ${file.name} (${state.sourceSheets.length} arkusz(e): ${state.sourceSheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    state.sourceWorkbook = null;
-    state.sourceWorkbookName = "";
-    state.sourceSheets = [];
-    fillSelect(ui.sourceSheet1a, []);
-    showError(`Nie udało się wczytać source file: ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z source file: ${error.message}`);
   }
 }
 
 async function onMasterFilePicked(event) {
   const file = event.target.files?.[0];
-  if (!file) {
-    state.masterWorkbook = null;
-    state.masterWorkbookName = "";
-    state.masterWorkbookBytes = null;
-    state.masterSheets = [];
-    fillSelect(ui.masterSheet, []);
-    hideInlineError();
-    refreshUiReadiness();
-    return;
-  }
+  fillSelect(ui.masterSheet, []);
+  state.masterWorkbook = null;
+  state.masterWorkbookBytes = null;
+  if (!file) { hideInlineError(); refreshUiReadiness(); return; }
   try {
-    const loaded = await readWorkbookBundle(file);
-    state.masterWorkbook = loaded.workbook;
+    // Only read sheet names for the dropdown.
+    // runProcess2 always re-reads the file fresh from the input.
+    const wb = await readWorkbookFromFile(file);
+    state.masterWorkbook = wb;
     state.masterWorkbookName = file.name;
-    state.masterWorkbookBytes = loaded.buffer;
-    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
+    state.masterSheets = getWorkbookSheetNames(wb);
     fillSelect(ui.masterSheet, state.masterSheets);
     hideInlineError();
-    log(`Master loaded: ${file.name} (${state.masterSheets.length} sheet(s)).`);
-    log(`Master sheets: ${state.masterSheets.join(" | ")}`);
+    log(`Master: ${file.name} (${state.masterSheets.length} arkusz(e): ${state.masterSheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    state.masterWorkbook = null;
-    state.masterWorkbookName = "";
-    state.masterWorkbookBytes = null;
-    state.masterSheets = [];
-    fillSelect(ui.masterSheet, []);
-    refreshUiReadiness();
-    showError(`Nie udało się wczytać master file: ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z master file: ${error.message}`);
   }
 }
 
@@ -381,10 +361,9 @@ function setBadge(el, ok, text) {
 }
 
 function refreshUiReadiness() {
-  const hasSource = !!state.sourceWorkbook;
-  const hasMaster = !!state.masterWorkbook;
-  const hasPdfs = (ui.payslipFiles.files || []).length > 0;
-  const hasMasterP4 = !!state.masterWorkbookP2;
+  const hasSource  = !!(ui.sourceFile.files && ui.sourceFile.files[0]);
+  const hasMaster  = !!(ui.masterFile.files && ui.masterFile.files[0]);
+  const hasPdfs    = (ui.payslipFiles.files || []).length > 0;
 
   const readyProcess1 = hasSource && !!ui.sourceSheet1a.value;
   const readyProcess2 = hasSource && hasMaster && !!ui.sourceSheet1a.value && !!ui.masterSheet.value;
@@ -490,7 +469,7 @@ function nextWorkday(date) {
 }
 
 function validateProcess1Inputs() {
-  if (!state.sourceWorkbook) {
+  if (!ui.sourceFile.files || !ui.sourceFile.files[0]) {
     throw new Error("Wybierz Current Holiday Report.");
   }
   if (!ui.sourceSheet1a.value) {
@@ -499,10 +478,10 @@ function validateProcess1Inputs() {
 }
 
 function validateProcess2Inputs() {
-  if (!state.sourceWorkbook) {
+  if (!ui.sourceFile.files || !ui.sourceFile.files[0]) {
     throw new Error("Wybierz Current Holiday Report.");
   }
-  if (!state.masterWorkbook) {
+  if (!ui.masterFile.files || !ui.masterFile.files[0]) {
     throw new Error("Wybierz Holiday Balance master file.");
   }
   if (!ui.sourceSheet1a.value || !ui.masterSheet.value) {
@@ -527,8 +506,12 @@ async function runProcess1() {
   try {
     validateProcess1Inputs();
     log("=== Process 1 ===");
-    const sourceRows = sheetToRows(state.sourceWorkbook, ui.sourceSheet1a.value);
-    const flexiRows = buildFlexiAbsenceRows(sourceRows);
+    const sourceFile = ui.sourceFile.files && ui.sourceFile.files[0];
+    if (!sourceFile) throw new Error("Wybierz plik source.");
+    log(`Czytam source: ${sourceFile.name}`);
+    const sourceWb   = await readWorkbookFromFile(sourceFile);
+    const sourceRows = sheetToRows(sourceWb, ui.sourceSheet1a.value);
+    const flexiRows  = buildFlexiAbsenceRows(sourceRows);
 
     const flexiWb = buildWorkbookFromRows(
       "Flexi absence input",
@@ -562,30 +545,38 @@ async function runProcess2() {
   try {
     validateProcess2Inputs();
     log("=== Process 2 ===");
-    const monthLabel = ui.monthLabel.value;
-    const sourceRows = sheetToRows(state.sourceWorkbook, ui.sourceSheet1a.value);
+
+    // Read source file fresh from disk
+    const sourceFile = ui.sourceFile.files && ui.sourceFile.files[0];
+    if (!sourceFile) throw new Error("Wybierz plik source.");
+    log(`Czytam source: ${sourceFile.name}`);
+    const sourceWb = await readWorkbookFromFile(sourceFile);
+    const sourceRows = sheetToRows(sourceWb, ui.sourceSheet1a.value);
     const balanceSummaryRows = buildBalanceSummaryFromSource(sourceRows);
+    log(`  Source: ${balanceSummaryRows.length} rekordów.`);
+
+    // Read master file fresh from disk
+    const masterFile = ui.masterFile.files && ui.masterFile.files[0];
+    if (!masterFile) throw new Error("Wybierz plik master.");
+    log(`Czytam master: ${masterFile.name}`);
+    const masterBundle = await readWorkbookBundle(masterFile);
+    const masterWb    = masterBundle.workbook;
+    const masterBytes = masterBundle.buffer;
+
+    const monthLabel  = ui.monthLabel.value;
+    const sheetName   = ui.masterSheet.value;
+
     const updatePlan = buildMasterUpdatePlan(
-      state.masterWorkbook,
-      ui.masterSheet.value,
+      masterWb,
+      sheetName,
       balanceSummaryRows,
       monthLabel
     );
-    const outBytes = applyMasterUpdatesViaWorksheetXml(state.masterWorkbookBytes, updatePlan);
-    state.masterWorkbook = readWorkbookFromBuffer(
-      outBytes.buffer.slice(outBytes.byteOffset, outBytes.byteOffset + outBytes.byteLength)
-    );
-    state.masterWorkbookBytes = outBytes.buffer.slice(
-      outBytes.byteOffset,
-      outBytes.byteOffset + outBytes.byteLength
-    );
-    state.masterSheets = getWorkbookSheetNames(state.masterWorkbook);
-    fillSelect(ui.masterSheet, state.masterSheets);
-    if (state.masterSheets.includes(updatePlan.sheetName)) {
-      ui.masterSheet.value = updatePlan.sheetName;
-    }
-    const outName = buildUpdatedMasterName(state.masterWorkbookName, monthLabel);
+
+    const outBytes = applyMasterUpdatesViaWorksheetXml(masterBytes, updatePlan);
+    const outName  = buildUpdatedMasterName(masterFile.name, monthLabel);
     writeBytesDownload(outBytes, outName);
+
     clearP3Selections("Process 3: wybierz ponownie pliki A i B do porównania.");
     log(`Master updated (${updatePlan.updates.length} employee(s)).`);
     setResultSummary([
