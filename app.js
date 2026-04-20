@@ -1232,18 +1232,16 @@ function getCellTextValue(cellNode, sharedStrings) {
   return v || "";
 }
 
-// Build a complete cell table from sheet XML.
-// Returns: { values: Map<ref, number|string|null>, formulas: Map<ref, string> }
-function buildRawCellTable(sheetXml, sharedStrings) {
-  const doc = new DOMParser().parseFromString(sheetXml, "application/xml");
+// Build cell table for ONE sheet XML.
+// Returns Map<ref, {raw, formula}>
+function buildSheetCellTable(wsXml, sharedStrings) {
+  const doc = new DOMParser().parseFromString(wsXml, "application/xml");
   if (doc.getElementsByTagName("parsererror").length > 0)
     throw new Error("Cannot parse sheet XML.");
   const sd = findDirectChildByLocalName(doc.documentElement, "sheetData");
-  if (!sd) throw new Error("No sheetData in sheet.");
+  if (!sd) return new Map();
 
-  const values   = new Map();  // ref → number | string | null
-  const formulas = new Map();  // ref → formula string (same-sheet arithmetic only)
-
+  const table = new Map();
   getDirectChildrenByLocalName(sd, "row").forEach((row) => {
     getDirectChildrenByLocalName(row, "c").forEach((cell) => {
       const ref  = cell.getAttribute("r") || "";
@@ -1253,7 +1251,6 @@ function buildRawCellTable(sheetXml, sharedStrings) {
       const vTxt = vEl ? vEl.textContent.trim() : "";
       const fTxt = fEl ? fEl.textContent.trim() : "";
 
-      // Raw value stored in the file
       let raw = null;
       if (type === "s") {
         const idx = parseInt(vTxt, 10);
@@ -1262,67 +1259,117 @@ function buildRawCellTable(sheetXml, sharedStrings) {
         const n = Number(vTxt);
         raw = Number.isFinite(n) ? n : vTxt;
       }
-      values.set(ref, raw);
-
-      // Store formula only if it contains NO cross-sheet references
-      // (cross-sheet refs can't be resolved here — we use cached <v> for those)
-      if (fTxt) {
-        const isCrossSheet = fTxt.includes("!") && (fTxt.includes("'") || /[A-Za-z].*!/.test(fTxt));
-        if (!isCrossSheet) {
-          formulas.set(ref, fTxt);
-        }
-        // For cross-sheet refs: raw already holds the cached <v> — keep it as-is
-      }
+      table.set(ref, { raw, formula: fTxt || null });
     });
   });
-
-  return { values, formulas };
+  return table;
 }
 
-// Evaluate all formulas in-place, writing results back into values.
-// Runs multiple passes until stable (handles chains like AE→AG→AJ).
-function evaluateFormulas(values, formulas) {
-  // Simple tokeniser: replace cell refs with their values, then eval arithmetic
-  function evalFormula(formula, values, selfRef) {
-    let f = formula.startsWith("=") ? formula.slice(1) : formula;
+// Build a multi-sheet lookup: sheetName → Map<ref, {raw,formula}>
+function buildAllSheetTables(zipped, sharedStrings) {
+  const wbXml  = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
+  const wbRels = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
 
-    // Replace cell refs with their current values
-    f = f.replace(/\b([A-Z]{1,3}[0-9]+)\b/g, (match) => {
-      if (match === selfRef) return "0";
-      const v = values.get(match);
-      if (typeof v === "number") return String(v);
-      return "0";
-    });
+  const wbDoc  = new DOMParser().parseFromString(wbXml,  "application/xml");
+  const relDoc = new DOMParser().parseFromString(wbRels, "application/xml");
 
-    // Safety: only allow arithmetic
-    if (!/^[\d\s+\-*/.()e]+$/i.test(f)) return null;
-    try {
-      // eslint-disable-next-line no-new-func
-      const result = Function('"use strict"; return (' + f + ');')();
-      return Number.isFinite(result) ? Math.round(result * 100) / 100 : null;
-    } catch {
-      return null;
+  // Build rId → path map
+  const ridToPath = {};
+  relDoc.getElementsByTagName("Relationship").forEach
+    ? Array.from(relDoc.getElementsByTagName("Relationship")).forEach((r) => {
+        ridToPath[r.getAttribute("Id")] = r.getAttribute("Target");
+      })
+    : (() => {
+        const rels = relDoc.getElementsByTagName("Relationship");
+        for (let i = 0; i < rels.length; i++) {
+          ridToPath[rels[i].getAttribute("Id")] = rels[i].getAttribute("Target");
+        }
+      })();
+
+  const tables = {};  // sheetName → Map
+  const sheetEls = wbDoc.getElementsByTagName("sheet");
+  for (let i = 0; i < sheetEls.length; i++) {
+    const el   = sheetEls[i];
+    const name = el.getAttribute("name") || "";
+    const rid  = el.getAttribute("r:id") ||
+                 el.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || "";
+    let target = ridToPath[rid] || "";
+    if (!target) continue;
+    target = target.replace(/^\//, "");
+    if (!target.startsWith("xl/")) target = "xl/" + target.replace(/^\.?\//, "");
+    const wsBytes = zipped[target];
+    if (!wsBytes) continue;
+    const wsXml = window.fflate.strFromU8(wsBytes);
+    tables[name] = buildSheetCellTable(wsXml, sharedStrings);
+  }
+  return tables;
+}
+
+// Evaluate all formulas for the TARGET sheet using all sheet tables for cross-sheet lookup.
+function evaluateSheetFormulas(targetTable, allTables) {
+  const cache = new Map();
+
+  function getVal(sheetName, ref) {
+    const tbl = sheetName ? (allTables[sheetName] || targetTable) : targetTable;
+    if (cache.has(sheetName + "!" + ref)) return cache.get(sheetName + "!" + ref);
+    const cell = tbl.get(ref);
+    if (!cell) return 0;
+    if (!cell.formula) {
+      const v = typeof cell.raw === "number" ? cell.raw : 0;
+      cache.set(sheetName + "!" + ref, v);
+      return v;
     }
+    // Evaluate formula of a dependency cell (no deep recursion — use raw as fallback)
+    const v = typeof cell.raw === "number" ? cell.raw : 0;
+    cache.set(sheetName + "!" + ref, v);
+    return v;
   }
 
-  // Up to 10 passes to resolve chains
+  function evalFormula(formula, selfRef) {
+    let f = formula.startsWith("=") ? formula.slice(1) : formula;
+
+    // Replace cross-sheet refs: 'SheetName'!REF or SheetName!REF
+    f = f.replace(/'([^']+)'!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => {
+      return String(getVal(sheet, ref));
+    });
+    f = f.replace(/([A-Za-z][A-Za-z0-9 ]*)!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => {
+      return String(getVal(sheet.trim(), ref));
+    });
+
+    // Replace same-sheet refs
+    f = f.replace(/([A-Z]{1,3}[0-9]+)/g, (match) => {
+      if (match === selfRef) return "0";
+      const cell = targetTable.get(match);
+      if (!cell) return "0";
+      return typeof cell.raw === "number" ? String(cell.raw) : "0";
+    });
+
+    if (!/^[\d\s+\-*/.()eE]+$/i.test(f)) return null;
+    try {
+      const result = Function('"use strict"; return (' + f + ');')();
+      return Number.isFinite(result) ? Math.round(result * 100) / 100 : null;
+    } catch { return null; }
+  }
+
+  // Multiple passes for formula chains (e.g. AG depends on month cols, AJ depends on AG)
   for (let pass = 0; pass < 10; pass++) {
     let changed = false;
-    formulas.forEach((formula, ref) => {
-      const result = evalFormula(formula, values, ref);
+    targetTable.forEach((cell, ref) => {
+      if (!cell.formula) return;
+      // Skip cross-sheet-only formulas only if they have no same-sheet deps
+      const result = evalFormula(cell.formula, ref);
       if (result !== null) {
-        const prev = values.get(ref);
+        const prev = cell.raw;
         if (prev !== result) {
-          values.set(ref, result);
+          cell.raw = result;
           changed = true;
         }
       }
     });
     if (!changed) break;
   }
-
-  return values;
 }
+
 
 async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   if (!window.fflate) throw new Error("fflate not available.");
@@ -1331,17 +1378,19 @@ async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   const zipped = window.fflate.unzipSync(bytes);
 
   const sharedStrings = parseSharedStrings(zipped);
-  const wbXml  = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
-  const wbRels = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
-  const wsPath = resolveWorksheetPath(wbXml, wbRels, sheetName);
-  if (!zipped[wsPath]) throw new Error(`Sheet file not found: ${wsPath}`);
-  const wsXml = window.fflate.strFromU8(zipped[wsPath]);
 
-  // ── Build raw cell table ──
-  const { values, formulas } = buildRawCellTable(wsXml, sharedStrings);
+  // ── Build cell tables for ALL sheets in the workbook ──
+  // This lets us resolve cross-sheet formula references (e.g. 'Sep2024'!AH3)
+  const allTables = buildAllSheetTables(zipped, sharedStrings);
+  const targetTable = allTables[sheetName];
+  if (!targetTable) throw new Error(`Sheet '${sheetName}' not found in workbook.`);
 
-  // ── Evaluate all arithmetic formulas ──
-  evaluateFormulas(values, formulas);
+  // ── Evaluate formulas using cross-sheet data ──
+  evaluateSheetFormulas(targetTable, allTables);
+
+  // Flatten to a simple Map<ref, value> for the rest of the function
+  const values = new Map();
+  targetTable.forEach((cell, ref) => values.set(ref, cell.raw));
 
   // ── Rebuild row structure from the sheet XML for header/data reading ──
   const doc = new DOMParser().parseFromString(wsXml, "application/xml");
