@@ -1597,8 +1597,8 @@ function parseDanishNumber(raw) {
 
 // Extract all numbers from a text line, returning array of floats
 function extractLineNumbers(line) {
-  const tokens = line.match(/-?[0-9][0-9\s.,]*/g) || [];
-  return tokens.map((t) => parseDanishNumber(t.replace(/\s/g, ""))).filter((n) => n !== null);
+  // Split on whitespace first so "2,08 9,56" becomes ["2,08", "9,56"] not one merged token.
+  return line.split(/\s+/).map((t) => parseDanishNumber(t)).filter((n) => n !== null);
 }
 
 async function parsePayslipBatch(file) {
