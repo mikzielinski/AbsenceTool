@@ -854,7 +854,7 @@ function buildMasterUpdatePlan(workbook, sheetName, summaryRows, monthLabel) {
     log(`OK SAP ${rec["SAP ID"]}: Holiday=${round2(rec.Holiday)}, Special=${round2(rec.Special)}`);
   });
 
-  return { sheetName, monthIdx, specialIdx, totalHolidayIdx, totalSpecialIdx, updates };
+  return { sheetName, monthIdx, specialIdx, updates };
 }
 
 function applyMasterUpdatePlanToWorkbook(workbook, updatePlan) {
@@ -862,15 +862,10 @@ function applyMasterUpdatePlanToWorkbook(workbook, updatePlan) {
   if (!ws) {
     return;
   }
+  // Only write month columns — never touch Total holiday/special balance cells.
   updatePlan.updates.forEach((update) => {
     setWorksheetCellValue(ws, update.rowIdx, update.monthIdx ?? updatePlan.monthIdx, update.holiday);
     setWorksheetCellValue(ws, update.rowIdx, update.specialIdx ?? updatePlan.specialIdx, update.special);
-    if (Number.isInteger(updatePlan.totalHolidayIdx)) {
-      setWorksheetCellValue(ws, update.rowIdx, updatePlan.totalHolidayIdx, update.holiday);
-    }
-    if (Number.isInteger(updatePlan.totalSpecialIdx)) {
-      setWorksheetCellValue(ws, update.rowIdx, updatePlan.totalSpecialIdx, update.special);
-    }
   });
 }
 
@@ -1580,27 +1575,14 @@ function updateWorksheetXmlValues(sheetXml, updatePlan) {
   if (!sheetData) {
     throw new Error("Arkusz XLSX nie zawiera sekcji sheetData.");
   }
+  // Only write to the month columns (holiday + special for the selected month).
+  // Do NOT touch Total holiday balance / Total special holiday balance —
+  // those cells contain SUM formulas. Writing a raw value there would replace
+  // the formula with a single month's number, breaking Process 3 and Process 4.
+  // fullCalcOnLoad="1" in workbook.xml ensures Excel recalculates on open.
   updatePlan.updates.forEach((update) => {
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.monthIdx + 1, update.holiday);
     setExistingWorksheetXmlCellByCoords(doc, sheetData, update.rowIdx + 1, updatePlan.specialIdx + 1, update.special);
-    if (Number.isInteger(updatePlan.totalHolidayIdx)) {
-      setExistingWorksheetXmlCellByCoords(
-        doc,
-        sheetData,
-        update.rowIdx + 1,
-        updatePlan.totalHolidayIdx + 1,
-        update.holiday
-      );
-    }
-    if (Number.isInteger(updatePlan.totalSpecialIdx)) {
-      setExistingWorksheetXmlCellByCoords(
-        doc,
-        sheetData,
-        update.rowIdx + 1,
-        updatePlan.totalSpecialIdx + 1,
-        update.special
-      );
-    }
   });
   const serialized = new XMLSerializer().serializeToString(doc);
   // Avoid double XML declaration which can corrupt the worksheet.
