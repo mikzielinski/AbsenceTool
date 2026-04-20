@@ -672,25 +672,52 @@ async function runProcess4() {
   try {
     log("=== Process 4 ===");
     const pdfFiles = Array.from(ui.payslipFiles.files || []);
-    if (pdfFiles.length === 0) {
-      throw new Error("Wybierz co najmniej jeden payslip PDF.");
+    if (pdfFiles.length === 0) throw new Error("Wybierz co najmniej jeden payslip PDF.");
+
+    // Always read the master file FRESH from disk — never from in-memory state.
+    // The user must pick the already-updated master (output from Process 2).
+    if (!state.masterWorkbookP2) throw new Error("Wybierz plik master dla Process 4.");
+    const masterSheet = ui.masterSheetP2.value;
+    if (!masterSheet) throw new Error("Wybierz arkusz mastera dla Process 4.");
+
+    log(`Reading master: ${state.masterWorkbookNameP2} / ${masterSheet}`);
+    // Re-read from the raw bytes to avoid any stale in-memory state
+    const masterFileInput = ui.masterFileP2;
+    const masterFile = masterFileInput.files && masterFileInput.files[0];
+    let freshWb;
+    if (masterFile) {
+      freshWb = await readWorkbookFromFile(masterFile);
+      log(`  Fresh read from disk: ${masterFile.name}`);
+    } else {
+      // Fallback to state if file ref lost (e.g. tab switch)
+      freshWb = state.masterWorkbookP2;
+      log(`  Using in-memory workbook (re-pick file if values look stale)`);
     }
-    const { wb, sheet } = resolveMasterForP2();
-    const { totals, specials, names } = readCollectiveTotals(wb, sheet);
+
+    const { totals, specials, names } = readCollectiveTotals(freshWb, masterSheet);
+    log(`  Master records read: ${Object.keys(totals).length}`);
+    Object.entries(totals).forEach(([sap, val]) => {
+      log(`  SAP ${sap}: Holiday balance=${val}, Special=${specials[sap] ?? "n/a"}`);
+    });
+
+    // Parse payslip PDFs
     const records = [];
     for (const file of pdfFiles) {
       log(`Parsing ${file.name} ...`);
       const { records: fileRecords, pagesTotal, pagesWithText } = await parsePayslipBatch(file);
       records.push(...fileRecords);
-      log(`  pages: ${pagesTotal}, with text: ${pagesWithText}`);
-      log(`  ${fileRecords.length} employee record(s).`);
+      log(`  pages: ${pagesTotal}, with text: ${pagesWithText}, employees: ${fileRecords.length}`);
       fileRecords.forEach((rec) => {
         log(
-          `  page ${rec.page ?? "?"}: ID=${rec.sap_id}, Name=${rec.name || "Unknown"}, `
-          + `Holiday=${rec.payslip_holidays_total ?? "null"}, Special=${rec.payslip_special_total ?? "null"}`
+          `  p${rec.page ?? "?"}: ID=${rec.sap_id} | `
+          + `Holiday=${rec.payslip_holidays_total ?? "null"} | `
+          + `Special=${rec.payslip_special_total ?? "null"}`
         );
       });
     }
+
+    if (records.length === 0) throw new Error("Nie udało się sparsować żadnych rekordów z payslipów.");
+
     const reconciliationRows = buildPayslipReportRows(records, totals, specials, names);
     const outWb = buildPayslipReportWorkbook(reconciliationRows);
     const outName = `Payslip reconciliation ${todayIso()}.xlsx`;
@@ -1158,227 +1185,21 @@ function buildBalanceComparisonWorkbook(rows) {
   return wb;
 }
 
-async function parsePayslipBatch(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
-  const pdf = await loadingTask.promise;
-  const pagesTotal = Number(pdf.numPages || 0);
-  if (pagesTotal <= 0) {
-    throw new Error(`Payslip PDF nie zawiera stron: ${file.name}`);
-  }
-  const records = [];
-  let pagesWithText = 0;
-  for (let i = 1; i <= pagesTotal; i += 1) {
-    const page = await pdf.getPage(i);
-    const text = await extractPageText(page);
-    if (!text) {
-      continue;
-    }
-    pagesWithText += 1;
-    const rec = parseEmployeeBlock(text);
-    rec.page = i;
-    if (rec.sap_id === "UNKNOWN") {
-      continue;
-    }
-    records.push(rec);
-  }
-  if (pagesWithText === 0) {
-    throw new Error(`Payslip PDF nie zawiera rozpoznawalnego tekstu: ${file.name}`);
-  }
-  if (records.length === 0) {
-    throw new Error(`Nie udało się odczytać żadnego numeru pracownika z payslipa: ${file.name}`);
-  }
-  return { records, pagesTotal, pagesWithText };
-}
-
-function parseEmployeeBlock(text) {
-  const sap = extractEmployeeNumber(text);
-  const name = extractEmployeeName(text, sap);
-  const pHoliday = extractHolidayTotalValue(text);
-  const pSpecial = extractAmountNearLabel(text, [
-    /special\s*holidays?/i,
-    /special\s*holiday\s*balance/i,
-  ]);
-  return {
-    sap_id: sap,
-    name,
-    payslip_holidays_total: pHoliday,
-    payslip_special_total: pSpecial,
-  };
-}
-
-function parseFlexibleNum(raw) {
-  const value = String(raw || "")
-    .replaceAll("\u00a0", " ")
-    .trim();
-  if (!value) {
-    return null;
-  }
-  const normalized = value
-    .replace(/\s+/g, "")
-    .replace(/[^0-9,.\-]/g, "");
-  if (!normalized || !/[0-9]/.test(normalized)) {
-    return null;
-  }
-  const hasDot = normalized.includes(".");
-  const hasComma = normalized.includes(",");
-  if (hasDot && hasComma) {
-    if (normalized.lastIndexOf(".") > normalized.lastIndexOf(",")) {
-      return round2(Number(normalized.replaceAll(",", "")));
-    }
-    return round2(Number(normalized.replaceAll(".", "").replaceAll(",", ".")));
-  }
-  if (hasComma) {
-    return round2(Number(normalized.replaceAll(",", ".")));
-  }
-  return round2(Number(normalized));
-}
-
-function splitTextLines(text) {
-  return String(text || "")
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-}
-
-function extractEmployeeNumber(text) {
-  const patterns = [
-    /employee\s*no\.?\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
-    /employee\s*number\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
-    /emp(?:loyee)?\s*id\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
-    /sap\s*id\s*[:#]?\s*([0-9][0-9\s]{3,})/i,
-  ];
-  for (const pattern of patterns) {
-    const match = String(text || "").match(pattern);
-    if (match && match[1]) {
-      const normalized = normalizeSap(match[1].replace(/\s+/g, ""));
-      if (normalized) {
-        return normalized;
-      }
-    }
-  }
-
-  const lines = splitTextLines(text);
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!/employee\s*(no|number|id)|sap\s*id/i.test(lines[i])) {
-      continue;
-    }
-    const sameLineNumber = lines[i].match(/([0-9]{4,})/);
-    if (sameLineNumber?.[1]) {
-      return normalizeSap(sameLineNumber[1]);
-    }
-    const nextLine = lines[i + 1] || "";
-    const nextLineNumber = nextLine.match(/([0-9]{4,})/);
-    if (nextLineNumber?.[1]) {
-      return normalizeSap(nextLineNumber[1]);
-    }
-  }
-  return "UNKNOWN";
-}
-
-function looksLikeEmployeeName(value) {
-  const text = String(value || "").trim();
-  if (!text) {
-    return false;
-  }
-  if (/[0-9]/.test(text)) {
-    return false;
-  }
-  const words = text.split(/\s+/).filter(Boolean);
-  return words.length >= 2 && words.join("").length >= 4;
-}
-
-function extractEmployeeName(text, sapId = "") {
-  const lines = splitTextLines(text);
-  const targetSap = normalizeSap(sapId);
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const direct = line.match(/employee\s*name\s*[:\-]\s*(.+)$/i) || line.match(/^name\s*[:\-]\s*(.+)$/i);
-    if (direct?.[1] && looksLikeEmployeeName(direct[1])) {
-      return direct[1].trim();
-    }
-  }
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!/employee\s*(no|number|id)/i.test(lines[i])) {
-      continue;
-    }
-    const prev = lines[i - 1] || "";
-    if (looksLikeEmployeeName(prev)) {
-      return prev.trim();
-    }
-  }
-  if (targetSap) {
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (!line.includes(targetSap)) {
-        continue;
-      }
-      const nameFromPrefix = line.replace(targetSap, "").trim();
-      if (looksLikeEmployeeName(nameFromPrefix)) {
-        return nameFromPrefix;
-      }
-      const prev = lines[i - 1] || "";
-      if (looksLikeEmployeeName(prev)) {
-        return prev.trim();
-      }
-    }
-  }
-  return "Unknown";
-}
-
-function extractNumbersFromText(text) {
-  const raw = String(text || "").match(/-?\d[\d\s.,-]*/g) || [];
-  return raw
-    .map((value) => parseFlexibleNum(value))
-    .filter((value) => value !== null && value !== undefined);
-}
-
-function extractAmountNearLabel(text, labelPatterns) {
-  const lines = splitTextLines(text);
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const matchesLabel = labelPatterns.some((pattern) => pattern.test(line));
-    if (!matchesLabel) {
-      continue;
-    }
-    const currentNums = extractNumbersFromText(line);
-    if (currentNums.length > 0) {
-      return currentNums[currentNums.length - 1];
-    }
-    const nextLine = lines[i + 1] || "";
-    const nextNums = extractNumbersFromText(nextLine);
-    if (nextNums.length > 0) {
-      return nextNums[nextNums.length - 1];
-    }
-  }
-  return null;
-}
-
-function extractHolidayTotalValue(text) {
-  const lines = splitTextLines(text);
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (!/holidays?\s*total/i.test(line)) {
-      continue;
-    }
-    const currentNums = extractNumbersFromText(line);
-    if (currentNums.length >= 2) {
-      // For payslip tables, the highlighted expected value is typically the last
-      // number on the row (new balance/rightmost column).
-      return currentNums[currentNums.length - 1];
-    }
-    const nextLine = lines[i + 1] || "";
-    const nextNums = extractNumbersFromText(nextLine);
-    if (nextNums.length > 0) {
-      return nextNums[nextNums.length - 1];
-    }
-  }
-  return extractAmountNearLabel(text, [
-    /holidays?\s*total/i,
-    /total\s*holidays?/i,
-    /holiday\s*balance/i,
-  ]);
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF parsing — Danish payslip format
+//
+// Expected page layout (from working Python version):
+//   ...
+//   <Employee Name>
+//   Employeeno  12345
+//   ...
+//   Holidays total   <prev_balance>   <new_balance>
+//   Special holidays <prev_balance>   <new_balance>   (optional, sometimes single value)
+//
+// We always take the LAST (rightmost / new balance) number from each row.
+// Numbers use Danish locale: thousands sep = "." and decimal sep = ","
+// e.g. "1.234,56" = 1234.56
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function extractPageText(page) {
   const textContent = await page.getTextContent();
@@ -1389,46 +1210,159 @@ async function extractPageText(page) {
       y: Number(item?.transform?.[5] || 0),
     }))
     .filter((item) => item.str);
-  if (items.length === 0) {
-    return "";
-  }
+  if (items.length === 0) return "";
 
+  // Group into lines by y-coordinate (tolerance 2pt)
   items.sort((a, b) => {
-    const yDiff = b.y - a.y;
-    if (Math.abs(yDiff) > 2) {
-      return yDiff;
-    }
-    return a.x - b.x;
+    const dy = b.y - a.y;
+    return Math.abs(dy) > 2 ? dy : a.x - b.x;
   });
-
   const lines = [];
-  let current = [];
-  let currentY = null;
+  let cur = [], curY = null;
   items.forEach((item) => {
-    if (currentY === null || Math.abs(item.y - currentY) <= 2) {
-      current.push(item);
-      currentY = currentY === null ? item.y : currentY;
-      return;
+    if (curY === null || Math.abs(item.y - curY) <= 2) {
+      cur.push(item);
+      if (curY === null) curY = item.y;
+    } else {
+      lines.push(cur);
+      cur = [item];
+      curY = item.y;
     }
-    lines.push(current);
-    current = [item];
-    currentY = item.y;
   });
-  if (current.length > 0) {
-    lines.push(current);
-  }
+  if (cur.length > 0) lines.push(cur);
 
   return lines
-    .map((lineItems) =>
-      lineItems
-        .sort((a, b) => a.x - b.x)
-        .map((item) => item.str)
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim()
-    )
+    .map((l) => l.sort((a, b) => a.x - b.x).map((i) => i.str).join(" ").replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function splitTextLines(text) {
+  return String(text || "").split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+
+// Parse a Danish-locale number string → float | null
+// "1.234,56" → 1234.56 | "14,56" → 14.56 | "14.56" → 14.56 | "-5,00" → -5
+function parseDanishNumber(raw) {
+  const s = String(raw || "").replace(/\u00a0/g, "").trim();
+  if (!s || !/[0-9]/.test(s)) return null;
+  const clean = s.replace(/[^0-9,.\-]/g, "");
+  const hasDot = clean.includes(".");
+  const hasComma = clean.includes(",");
+  let numeric;
+  if (hasDot && hasComma) {
+    // Danish: "1.234,56" — dot=thousands, comma=decimal
+    if (clean.lastIndexOf(",") > clean.lastIndexOf(".")) {
+      numeric = Number(clean.replaceAll(".", "").replaceAll(",", "."));
+    } else {
+      // US style fallback: "1,234.56"
+      numeric = Number(clean.replaceAll(",", ""));
+    }
+  } else if (hasComma) {
+    numeric = Number(clean.replaceAll(",", "."));
+  } else {
+    numeric = Number(clean);
+  }
+  return Number.isFinite(numeric) ? round2(numeric) : null;
+}
+
+// Extract all numbers from a text line, returning array of floats
+function extractLineNumbers(line) {
+  const tokens = line.match(/-?[0-9][0-9\s.,]*/g) || [];
+  return tokens.map((t) => parseDanishNumber(t.replace(/\s/g, ""))).filter((n) => n !== null);
+}
+
+async function parsePayslipBatch(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const pdf = await window.pdfjsLib.getDocument({ data: bytes }).promise;
+  const pagesTotal = pdf.numPages || 0;
+  if (pagesTotal <= 0) throw new Error(`Payslip PDF has no pages: ${file.name}`);
+
+  const records = [];
+  let pagesWithText = 0;
+
+  for (let i = 1; i <= pagesTotal; i += 1) {
+    const page = await pdf.getPage(i);
+    const text = await extractPageText(page);
+    if (!text) continue;
+    pagesWithText += 1;
+
+    // Only process pages that look like an employee payslip
+    if (!/employeeno/i.test(text)) continue;
+
+    const rec = parseEmployeeBlock(text);
+    rec.page = i;
+    if (rec.sap_id === "UNKNOWN") {
+      log(`  p${i}: could not read SAP ID — skipped`);
+      continue;
+    }
+    records.push(rec);
+  }
+
+  if (pagesWithText === 0) throw new Error(`PDF contains no readable text: ${file.name}`);
+  if (records.length === 0) throw new Error(`No employee records found in: ${file.name}`);
+  return { records, pagesTotal, pagesWithText };
+}
+
+function parseEmployeeBlock(text) {
+  const lines = splitTextLines(text);
+
+  // ── SAP ID ──
+  // Matches: "Employeeno 12345" or "Employeeno: 12345"
+  let sap_id = "UNKNOWN";
+  for (const line of lines) {
+    const m = line.match(/employeeno[:\s]+([0-9]{4,})/i);
+    if (m) { sap_id = normalizeSap(m[1]); break; }
+  }
+  // Fallback: look for "Employeeno" then number on same or next line
+  if (sap_id === "UNKNOWN") {
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!/employeeno/i.test(lines[i])) continue;
+      const nums = lines[i].match(/([0-9]{4,})/);
+      if (nums) { sap_id = normalizeSap(nums[1]); break; }
+      const next = lines[i + 1] || "";
+      const numsNext = next.match(/([0-9]{4,})/);
+      if (numsNext) { sap_id = normalizeSap(numsNext[1]); break; }
+    }
+  }
+
+  // ── Name ── line just before "Employeeno"
+  let name = "Unknown";
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/employeeno/i.test(lines[i])) continue;
+    const prev = lines[i - 1] || "";
+    if (prev && !/[0-9]/.test(prev) && prev.trim().split(/\s+/).length >= 2) {
+      name = prev.trim();
+    }
+    break;
+  }
+
+  // ── Holidays total → new balance (last number on the row) ──
+  // Row looks like: "Holidays total  14,56  28,56"  (prev + new)
+  // or single:      "Holidays total  28,56"
+  let payslip_holidays_total = null;
+  for (const line of lines) {
+    if (!/holidays\s+total/i.test(line)) continue;
+    const nums = extractLineNumbers(line);
+    if (nums.length >= 1) {
+      payslip_holidays_total = nums[nums.length - 1]; // always take new (rightmost)
+    }
+    break;
+  }
+
+  // ── Special holidays → new balance ──
+  // Row: "Special holidays  5,00  10,00"  or just "Special holidays  10,00"
+  let payslip_special_total = null;
+  for (const line of lines) {
+    if (!/special\s+holidays?/i.test(line)) continue;
+    const nums = extractLineNumbers(line);
+    if (nums.length >= 1) {
+      payslip_special_total = nums[nums.length - 1];
+    }
+    break;
+  }
+
+  return { sap_id, name, payslip_holidays_total, payslip_special_total };
 }
 
 function buildPayslipReportRows(records, totals, specials, names) {
