@@ -1734,10 +1734,10 @@ function toNumberOrNull(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return round2(value);
   }
-  // Handles locale formats like 9,56 and 48.779,54.
-  const parsedFlexible = parseFlexibleNum(value);
-  if (parsedFlexible !== null && parsedFlexible !== undefined) {
-    return parsedFlexible;
+  // Use parseDanishNumber which handles both Danish (1.234,56) and standard formats
+  const parsed = parseDanishNumber(String(value));
+  if (parsed !== null) {
+    return parsed;
   }
   const num = Number(String(value).replaceAll(",", "."));
   return Number.isNaN(num) ? null : round2(num);
