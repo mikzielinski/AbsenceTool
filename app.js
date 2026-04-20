@@ -1305,45 +1305,27 @@ function buildAllSheetTables(zipped, sharedStrings) {
   return tables;
 }
 
+
 // Evaluate all formulas for the TARGET sheet using all sheet tables for cross-sheet lookup.
 function evaluateSheetFormulas(targetTable, allTables) {
-  const cache = new Map();
 
   function getVal(sheetName, ref) {
     const tbl = sheetName ? (allTables[sheetName] || targetTable) : targetTable;
-    if (cache.has(sheetName + "!" + ref)) return cache.get(sheetName + "!" + ref);
-    const cell = tbl.get(ref);
+    const cell = tbl ? tbl.get(ref) : null;
     if (!cell) return 0;
-    if (!cell.formula) {
-      const v = typeof cell.raw === "number" ? cell.raw : 0;
-      cache.set(sheetName + "!" + ref, v);
-      return v;
-    }
-    // Evaluate formula of a dependency cell (no deep recursion — use raw as fallback)
-    const v = typeof cell.raw === "number" ? cell.raw : 0;
-    cache.set(sheetName + "!" + ref, v);
-    return v;
+    return typeof cell.raw === "number" ? cell.raw : 0;
   }
 
   function evalFormula(formula, selfRef) {
     let f = formula.startsWith("=") ? formula.slice(1) : formula;
-
-    // Replace cross-sheet refs: 'SheetName'!REF or SheetName!REF
-    f = f.replace(/'([^']+)'!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => {
-      return String(getVal(sheet, ref));
-    });
-    f = f.replace(/([A-Za-z][A-Za-z0-9 ]*)!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => {
-      return String(getVal(sheet.trim(), ref));
-    });
-
-    // Replace same-sheet refs
-    f = f.replace(/([A-Z]{1,3}[0-9]+)/g, (match) => {
+    f = f.replace(/'([^']+)'!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => String(getVal(sheet, ref)));
+    f = f.replace(/([A-Za-z][A-Za-z0-9 ]*)!([A-Z]{1,3}[0-9]+)/g, (_, sheet, ref) => String(getVal(sheet.trim(), ref)));
+    f = f.replace(/([A-Z]{1,3}[0-9]+)/g, (match) => {
       if (match === selfRef) return "0";
       const cell = targetTable.get(match);
       if (!cell) return "0";
       return typeof cell.raw === "number" ? String(cell.raw) : "0";
     });
-
     if (!/^[\d\s+\-*/.()eE]+$/i.test(f)) return null;
     try {
       const result = Function('"use strict"; return (' + f + ');')();
@@ -1351,25 +1333,19 @@ function evaluateSheetFormulas(targetTable, allTables) {
     } catch { return null; }
   }
 
-  // Multiple passes for formula chains (e.g. AG depends on month cols, AJ depends on AG)
-  for (let pass = 0; pass < 10; pass++) {
+  for (let pass = 0; pass < 15; pass++) {
     let changed = false;
     targetTable.forEach((cell, ref) => {
       if (!cell.formula) return;
-      // Skip cross-sheet-only formulas only if they have no same-sheet deps
       const result = evalFormula(cell.formula, ref);
-      if (result !== null) {
-        const prev = cell.raw;
-        if (prev !== result) {
-          cell.raw = result;
-          changed = true;
-        }
+      if (result !== null && cell.raw !== result) {
+        cell.raw = result;
+        changed = true;
       }
     });
     if (!changed) break;
   }
 }
-
 
 async function readSheetColumnsDirect(arrayBuffer, sheetName, opts) {
   if (!window.fflate) throw new Error("fflate not available.");
