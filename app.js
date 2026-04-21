@@ -940,7 +940,7 @@ function buildFlexiAbsenceRows(rows) {
         "Absence Type":    map.type,
         "From":            formatDateIso(base.startDate),
         "To":              formatDateIso(base.startDate),
-        "Days":            base.days,
+        "Days":            round2(base.days),
       });
       i += 1;
       continue;
