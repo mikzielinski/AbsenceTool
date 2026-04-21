@@ -600,70 +600,42 @@ async function runProcess2() {
 
 async function runProcess3() {
   clearLog();
-  // Always start with clean tables
   state.p3TableA = null;
   state.p3TableB = null;
   try {
     validateProcess3Inputs();
     log("=== Process 3 ===");
 
+    const fileA = ui.p3FileA.files && ui.p3FileA.files[0];
+    const fileB = ui.p3FileB.files && ui.p3FileB.files[0];
+    if (!fileA) throw new Error("Wybierz plik A.");
+    if (!fileB) throw new Error("Wybierz plik B.");
+
     const sheetA = ui.p3SheetA.value;
     const sheetB = ui.p3SheetB.value;
 
-    // ── Build temporary table from file A ──
-    // Read visible cell values only (cellFormula:false = no formula strings, only stored values)
-    log(`Czytam plik A (${state.p3WorkbookA ? "loaded" : "missing"}) / arkusz: ${sheetA}`);
-    if (!state.p3WorkbookA) throw new Error("Wybierz plik A.");
-    const rowsA = XLSX.utils.sheet_to_json(
-      state.p3WorkbookA.Sheets[sheetA],
-      { defval: null, raw: true }
-    );
-    if (!rowsA.length) throw new Error(`Arkusz '${sheetA}' w pliku A jest pusty.`);
-
-    // Find columns
-    const colsA  = Object.keys(rowsA[0]);
-    const idColA = findColumn(colsA, ["Holid", "SAP ID", "ID"]);
-    const totColA = findColumn(colsA, ["Total holidays"]);
-    const nameColA = findColumn(colsA, ["Name", "Employee", "Employee Name"]);
-    if (!idColA)  throw new Error(`Plik A: brak kolumny ID (szukano: Holid, SAP ID, ID). Kolumny: ${colsA.join(", ")}`);
-    if (!totColA) throw new Error(`Plik A: brak kolumny 'Total holidays'. Kolumny: ${colsA.join(", ")}`);
-
-    // Build temporary table A: SAP ID → { totalHolidays, name }
-    state.p3TableA = new Map();
-    rowsA.forEach((row) => {
-      const sap = normalizeSap(row[idColA]);
-      if (!sap || !/^[0-9]+$/.test(sap)) return;
-      const val  = toNumberOrNull(row[totColA]);
-      const name = nameColA ? String(row[nameColA] || "").trim() : "";
-      state.p3TableA.set(sap, { totalHolidays: val, name });
+    // ── Read plik A via raw XML ──
+    // Reads the exact <v> value stored in each cell (what Excel shows on screen).
+    // Never uses formula strings or cached state.
+    log(`Czytam plik A: ${fileA.name} / ${sheetA}`);
+    const bufA = await fileA.arrayBuffer();
+    state.p3TableA = await buildTempTable(bufA, sheetA, {
+      idCandidates:    ["Holid", "SAP ID", "ID"],
+      valueCandidates: ["Total holidays"],
+      nameCandidates:  ["Name", "Employee", "Employee Name"],
+      valueKey: "totalHolidays",
     });
     log(`  Plik A: ${state.p3TableA.size} rekordów.`);
     state.p3TableA.forEach((v, sap) => log(`  ID=${sap} | Total holidays=${v.totalHolidays}`));
 
-    // ── Build temporary table from file B ──
-    log(`Czytam plik B (${state.p3WorkbookB ? "loaded" : "missing"}) / arkusz: ${sheetB}`);
-    if (!state.p3WorkbookB) throw new Error("Wybierz plik B.");
-    const rowsB = XLSX.utils.sheet_to_json(
-      state.p3WorkbookB.Sheets[sheetB],
-      { defval: null, raw: true }
-    );
-    if (!rowsB.length) throw new Error(`Arkusz '${sheetB}' w pliku B jest pusty.`);
-
-    const colsB    = Object.keys(rowsB[0]);
-    const idColB   = findColumn(colsB, ["SAP ID", "ID", "Holid", "Employee"]);
-    const balColB  = findColumn(colsB, ["Total holiday balance"]);
-    const nameColB = findColumn(colsB, ["Employee", "Name", "Employee Name"]);
-    if (!idColB)  throw new Error(`Plik B: brak kolumny ID. Kolumny: ${colsB.join(", ")}`);
-    if (!balColB) throw new Error(`Plik B: brak kolumny 'Total holiday balance'. Kolumny: ${colsB.join(", ")}`);
-
-    // Build temporary table B: SAP ID → { totalHolidayBalance, name }
-    state.p3TableB = new Map();
-    rowsB.forEach((row) => {
-      const sap = normalizeSap(row[idColB]);
-      if (!sap || !/^[0-9]+$/.test(sap)) return;
-      const val  = toNumberOrNull(row[balColB]);
-      const name = nameColB ? String(row[nameColB] || "").trim() : "";
-      state.p3TableB.set(sap, { totalHolidayBalance: val, name });
+    // ── Read plik B via raw XML ──
+    log(`Czytam plik B: ${fileB.name} / ${sheetB}`);
+    const bufB = await fileB.arrayBuffer();
+    state.p3TableB = await buildTempTable(bufB, sheetB, {
+      idCandidates:    ["SAP ID", "ID", "Holid"],
+      valueCandidates: ["Total holiday balance"],
+      nameCandidates:  ["Employee", "Name", "Employee Name"],
+      valueKey: "totalHolidayBalance",
     });
     log(`  Plik B: ${state.p3TableB.size} rekordów.`);
     state.p3TableB.forEach((v, sap) => log(`  ID=${sap} | Total holiday balance=${v.totalHolidayBalance}`));
@@ -700,10 +672,124 @@ async function runProcess3() {
   } catch (error) {
     showError(error.message);
   } finally {
-    // Always clear temporary tables after process completes
     state.p3TableA = null;
     state.p3TableB = null;
   }
+}
+
+// Build a temporary lookup table from an xlsx file.
+// Reads raw <v> values from XML — exactly what Excel shows, no formula evaluation.
+// Returns Map<sapId, { [valueKey]: number|null, name: string }>
+async function buildTempTable(arrayBuffer, sheetName, opts) {
+  if (!window.fflate) throw new Error("fflate not available.");
+  const zipped = window.fflate.unzipSync(new Uint8Array(arrayBuffer));
+  const shared = parseSharedStrings(zipped);
+
+  const wbXml  = window.fflate.strFromU8(zipped["xl/workbook.xml"]);
+  const wbRels = window.fflate.strFromU8(zipped["xl/_rels/workbook.xml.rels"]);
+  const wsPath = resolveWorksheetPath(wbXml, wbRels, sheetName);
+  if (!zipped[wsPath]) throw new Error(`Arkusz '${sheetName}' nie znaleziony.`);
+  const wsXml = window.fflate.strFromU8(zipped[wsPath]);
+
+  const doc = new DOMParser().parseFromString(wsXml, "application/xml");
+  const sd  = findDirectChildByLocalName(doc.documentElement, "sheetData");
+  if (!sd) throw new Error("Brak sheetData.");
+  const xmlRows = getDirectChildrenByLocalName(sd, "row");
+  if (!xmlRows.length) throw new Error(`Arkusz '${sheetName}' jest pusty.`);
+
+  // Read raw <v> value for a cell (ignore formula entirely)
+  function rawVal(cell) {
+    if (!cell) return null;
+    const t   = cell.getAttribute("t") || "";
+    const vEl = findDirectChildByLocalName(cell, "v");
+    const v   = vEl ? vEl.textContent.trim() : "";
+    if (!v) return null;
+    if (t === "s") {
+      const idx = parseInt(v, 10);
+      return Number.isNaN(idx) ? null : (shared[idx] || null);
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : v;
+  }
+
+  // Build cell map for the whole sheet: ref → raw value
+  const cellMap = new Map();
+  xmlRows.forEach((row) => {
+    getDirectChildrenByLocalName(row, "c").forEach((cell) => {
+      const ref = cell.getAttribute("r") || "";
+      cellMap.set(ref, rawVal(cell));
+    });
+  });
+
+  // Find header row — first row where ID candidate column contains a string
+  // Scan rows 1 and 2 to build headerMap: colLetter → normalised header text
+  const headerMap = {};
+  const headerRaw = {};
+
+  function scanHeaderRow(rowEl) {
+    getDirectChildrenByLocalName(rowEl, "c").forEach((cell) => {
+      const ref = cell.getAttribute("r") || "";
+      const col = ref.replace(/[0-9]/g, "");
+      const v   = rawVal(cell);
+      if (typeof v === "string" && v.trim()) {
+        const norm = v.replace(/\s+/g, " ").trim();
+        headerMap[col] = norm.toLowerCase();
+        headerRaw[col] = norm;
+      }
+    });
+  }
+
+  // Scan ONLY row 1 for headers — row 2 contains sub-labels (Holiday/Special)
+  // that must NOT overwrite the real column headers from row 1.
+  scanHeaderRow(xmlRows[0]);
+
+  log(`  Headers found: ${Object.values(headerRaw).join(" | ")}`);
+
+  // Find column by EXACT name match only (case-insensitive, whitespace-normalised).
+  // No partial matching — prevents "Holiday" subheader columns interfering.
+  function findCol(candidates) {
+    for (const cand of candidates) {
+      const cl = cand.toLowerCase().replace(/\s+/g, " ").trim();
+      for (const [col, hdr] of Object.entries(headerMap)) {
+        if (hdr === cl) return col;
+      }
+    }
+    return null;
+  }
+
+  const idCol    = findCol(opts.idCandidates);
+  const valueCol = findCol(opts.valueCandidates);
+  const nameCol  = findCol(opts.nameCandidates || []);
+
+  if (!idCol)
+    throw new Error(`Brak kolumny ID w '${sheetName}'. Szukano: ${opts.idCandidates.join(", ")}. Nagłówki: ${Object.values(headerRaw).join(" | ")}`);
+  if (!valueCol)
+    throw new Error(`Brak kolumny wartości w '${sheetName}'. Szukano: ${opts.valueCandidates.join(", ")}. Nagłówki: ${Object.values(headerRaw).join(" | ")}`);
+
+  log(`  ID col: ${idCol} (${headerRaw[idCol]}), Value col: ${valueCol} (${headerRaw[valueCol]})`);
+
+  // Build result map
+  const result = new Map();
+  // Determine which row numbers are data rows (skip header rows)
+  const rowNums = xmlRows.map((r) => parseInt(r.getAttribute("r") || "0", 10))
+                         .filter((n) => n > 0)
+                         .sort((a, b) => a - b);
+
+  for (const rn of rowNums) {
+    const idRaw = cellMap.get(`${idCol}${rn}`);
+    const sap   = normalizeSap(idRaw);
+    if (!sap || !/^[0-9]+$/.test(sap)) continue;  // skip header/non-numeric rows
+
+    const val  = cellMap.get(`${valueCol}${rn}`);
+    const num  = typeof val === "number" ? Math.round(val * 100) / 100 : null;
+    const name = nameCol ? String(cellMap.get(`${nameCol}${rn}`) || "").trim() : "";
+
+    const rec = { name };
+    rec[opts.valueKey] = num;
+    result.set(sap, rec);
+  }
+
+  return result;
 }
 
 function resolveMasterForP2() {
