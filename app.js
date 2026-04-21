@@ -800,10 +800,9 @@ async function buildTempTable(arrayBuffer, sheetName, opts) {
 }
 
 function resolveMasterForP2() {
-  if (state.masterWorkbookP2 && ui.masterSheetP2.value) {
-    return { wb: state.masterWorkbookP2, sheet: ui.masterSheetP2.value };
-  }
-  throw new Error("Wybierz osobny master file i sheet dla Process 4.");
+  const f = ui.masterFileP2.files && ui.masterFileP2.files[0];
+  if (f && ui.masterSheetP2.value) return { file: f, sheet: ui.masterSheetP2.value };
+  throw new Error("Wybierz plik master i arkusz dla Process 4.");
 }
 
 async function runProcess4() {
@@ -814,16 +813,10 @@ async function runProcess4() {
     const pdfFiles = Array.from(ui.payslipFiles.files || []);
     if (pdfFiles.length === 0) throw new Error("Wybierz co najmniej jeden payslip PDF.");
 
-    // Always read the master file FRESH from disk — never from in-memory state.
-    // The user must pick the already-updated master (output from Process 2).
-    if (!state.masterWorkbookP2) throw new Error("Wybierz plik master dla Process 4.");
+    const masterFile  = ui.masterFileP2.files && ui.masterFileP2.files[0];
     const masterSheet = ui.masterSheetP2.value;
+    if (!masterFile)  throw new Error("Wybierz plik master dla Process 4.");
     if (!masterSheet) throw new Error("Wybierz arkusz mastera dla Process 4.");
-
-    // Always read master completely fresh via raw XML — no in-memory state used.
-    const masterFileEl = ui.masterFileP2;
-    const masterFile   = masterFileEl.files && masterFileEl.files[0];
-    if (!masterFile) throw new Error("Wybierz plik master dla Process 4.");
     log(`Reading master fresh from disk: ${masterFile.name} / ${masterSheet}`);
 
     const masterBuf = await masterFile.arrayBuffer();
