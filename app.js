@@ -1722,7 +1722,7 @@ function buildStyledXlsx(sheetName, headers, rows, isRedRow) {
       } else if (typeof v === "number") {
         sheetXml += `<c r="${ref}"${s}><v>${v}</v></c>`;
       } else if (typeof v === "boolean") {
-        sheetXml += `<c r="${ref}" t="b"${s}><v>${v ? 1 : 0}</v></c>`;
+        sheetXml += `<c r="${ref}" t="s"${s}><v>${si(v ? "TRUE" : "FALSE")}</v></c>`;
       } else {
         sheetXml += `<c r="${ref}" t="s"${s}><v>${si(String(v))}</v></c>`;
       }
@@ -1806,7 +1806,10 @@ function buildBalanceComparisonWorkbook(rows) {
     "Balance comparison",
     headers,
     rows,
-    (row) => row.Match !== true
+    (row) => {
+      const m = row["Match"];
+      return m === false || m === "FALSE" || m === 0;
+    }
   );
 }
 
@@ -2025,7 +2028,12 @@ function buildPayslipReportWorkbook(rows) {
     "Reconciliation",
     headers,
     rows,
-    (row) => row.Result !== true || row["Special result"] !== true
+    (row) => {
+      const r  = row["Result"];
+      const sr = row["Special result"];
+      const isFalse = (v) => v === false || v === "FALSE" || v === 0;
+      return isFalse(r) || isFalse(sr);
+    }
   );
 }
 
