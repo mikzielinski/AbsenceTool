@@ -7,8 +7,9 @@ const MONTHS = [
 ];
 
 const FLEXI_PROJECT_MAP = {
-  "1402 holidays (normal vacation days)": { type: "Vacation", code: "748" },
-  "1405 company days": { type: "Extra vacation days", code: "629" },
+  "1402 holidays (normal vacation days)": { type: "Vacation",            code: 748          },
+  "1405 company days":                    { type: "Extra vacation days",  code: 629          },
+  "1409 unpaid leave":                    { type: "Unpaid leave",         code: "Unpaid leave" },
 };
 
 const BALANCE_TYPE_MAP = {
@@ -886,68 +887,96 @@ async function runProcess4() {
 }
 
 function buildFlexiAbsenceRows(rows) {
-  const required = ["Project", "User", "SAP ID", "Start Date", "Days"];
-  const missing = required.filter((column) => !rows.some((row) => Object.hasOwn(row, column)));
+  const required = ["SAP ID", "Start Date", "Project", "Days"];
+  const missing = required.filter((col) => !rows.some((row) => Object.hasOwn(row, col)));
   if (missing.length > 0) {
     throw new Error(`Brak kolumn w source sheet (Process 1/2): ${missing.join(", ")}`);
   }
 
+  // Normalise project key for lookup
+  function projectKey(row) {
+    return String(row.Project || "").trim().toLowerCase();
+  }
+
+  // A record is whole-day if Days is a positive integer (1, 2, 3 ...)
+  function isWholeDay(days) {
+    return days > 0 && Number.isInteger(days);
+  }
+
+  // Filter and map to working objects
   const filtered = rows
     .map((row) => ({
-      projectKey: String(row.Project || "").trim().toLowerCase(),
-      user: String(row.User || "").trim(),
-      sap: normalizeSap(row["SAP ID"]),
+      key:       projectKey(row),
+      user:      String(row.User || "").trim(),
+      sap:       normalizeSap(row["SAP ID"]),
       startDate: parseDate(row["Start Date"]),
-      days: Number(row.Days || 0),
+      days:      Number(row.Days || 0),
     }))
-    .filter((row) => row.sap && row.startDate && Object.hasOwn(FLEXI_PROJECT_MAP, row.projectKey))
+    .filter((row) => row.sap && row.startDate && Object.hasOwn(FLEXI_PROJECT_MAP, row.key))
     .sort((a, b) => {
-      if (a.sap !== b.sap) return a.sap.localeCompare(b.sap);
-      if (a.projectKey !== b.projectKey) return a.projectKey.localeCompare(b.projectKey);
-      return a.startDate - b.startDate;
+      // Sort by SAP, then by date, then by project — so consecutive dates group naturally
+      if (a.sap !== b.sap)           return a.sap.localeCompare(b.sap);
+      if (a.startDate - b.startDate) return a.startDate - b.startDate;
+      return a.key.localeCompare(b.key);
     });
 
   if (filtered.length === 0) {
-    throw new Error("Brak pasujących rekordów Process 1/2 po filtrze project map.");
+    throw new Error("Brak pasujących rekordów Process 1 po filtrze project map.");
   }
 
-  const grouped = [];
+  const result = [];
   let i = 0;
+
   while (i < filtered.length) {
     const base = filtered[i];
-    const map = FLEXI_PROJECT_MAP[base.projectKey];
-    let currentStart = base.startDate;
-    let currentDays = Number(base.days || 0);
-    let currentTo = addWorkingDays(currentStart, currentDays);
+    const map  = FLEXI_PROJECT_MAP[base.key];
+
+    // Partial day — always its own line, From = To = startDate
+    if (!isWholeDay(base.days)) {
+      result.push({
+        "EMPLOYEE NUMBER": base.sap,
+        "Absence Code":    map.code,
+        "NAME":            base.user,
+        "Absence Type":    map.type,
+        "From":            formatDateIso(base.startDate),
+        "To":              formatDateIso(base.startDate),
+        "Days":            base.days,
+      });
+      i += 1;
+      continue;
+    }
+
+    // Whole day — try to merge consecutive whole-day records of same SAP + project
+    let totalDays  = base.days;
+    let lastDate   = base.startDate;
     let j = i + 1;
 
     while (j < filtered.length) {
-      const row = filtered[j];
-      if (row.sap !== base.sap || row.projectKey !== base.projectKey) {
-        break;
-      }
-      const expectedNext = nextWorkday(currentTo);
-      if (formatDateIso(row.startDate) === formatDateIso(expectedNext)) {
-        currentDays += Number(row.days || 0);
-        currentTo = addWorkingDays(currentStart, currentDays);
-        j += 1;
-      } else {
-        break;
-      }
+      const next = filtered[j];
+      // Must be same SAP, same project, whole day, and consecutive working day
+      if (next.sap !== base.sap || next.key !== base.key) break;
+      if (!isWholeDay(next.days)) break;
+      const expected = nextWorkday(lastDate);
+      if (formatDateIso(next.startDate) !== formatDateIso(expected)) break;
+      totalDays += next.days;
+      lastDate   = next.startDate;
+      j += 1;
     }
 
-    grouped.push({
+    // To = last day of merged range (lastDate itself, not addWorkingDays)
+    result.push({
       "EMPLOYEE NUMBER": base.sap,
-      "Absence Code": map.code,
-      NAME: base.user,
-      "Absence Type": map.type,
-      From: formatDateIso(currentStart),
-      To: formatDateIso(currentTo),
-      Days: round2(currentDays),
+      "Absence Code":    map.code,
+      "NAME":            base.user,
+      "Absence Type":    map.type,
+      "From":            formatDateIso(base.startDate),
+      "To":              formatDateIso(lastDate),
+      "Days":            round2(totalDays),
     });
     i = j;
   }
-  return grouped;
+
+  return result;
 }
 
 function buildBalanceSummaryFromSource(rows) {
