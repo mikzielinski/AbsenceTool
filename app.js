@@ -1910,7 +1910,7 @@ function autoWidth(ws, rows) {
 }
 
 function writeWorkbookDownload(workbook, filename) {
-  XLSX.writeFile(workbook, ensureXlsxName(filename));
+  XLSX.writeFile(workbook, ensureXlsxName(filename), { cellStyles: true });
 }
 
 function writeBytesDownload(bytes, filename) {
