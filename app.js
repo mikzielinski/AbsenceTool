@@ -27,9 +27,11 @@ const state = {
   p3WorkbookA: null,
   p3WorkbookAName: "",
   p3SheetsA: [],
+  p3TableA: null,  // temporary data table — cleared after process runs
   p3WorkbookB: null,
   p3WorkbookBName: "",
   p3SheetsB: [],
+  p3TableB: null,  // temporary data table — cleared after process runs
   masterWorkbook: null,
   masterWorkbookName: "",
   masterWorkbookBytes: null,
@@ -186,19 +188,21 @@ async function onP3FileAPicked(event) {
   const file = event.target.files?.[0];
   fillSelect(ui.p3SheetA, []);
   state.p3WorkbookA = null;
+  state.p3TableA    = null;  // clear any previous data table
   if (!file) { refreshUiReadiness(); return; }
   try {
-    // Only read sheet names (needed for the dropdown) — NOT the full workbook.
-    // The actual data is always read fresh from the file input in runProcess3.
-    const wb = await readWorkbookFromFile(file);
+    const buf = await file.arrayBuffer();
+    // Use xlsx.js with cellFormula:false so we get ONLY stored cell values, no formula strings
+    const wb  = XLSX.read(buf, { type: "array", cellDates: true, cellFormula: false });
     const sheets = getWorkbookSheetNames(wb);
-    state.p3WorkbookA = wb;  // kept only so validateProcess3Inputs can check sheet list
+    // Store the workbook temporarily just to populate the sheet dropdown
+    state.p3WorkbookA = wb;
     fillSelect(ui.p3SheetA, sheets);
     hideInlineError();
     log(`Plik A: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    showError(`Nie udało się odczytać arkuszy z pliku A: ${error.message}`);
+    showError(`Nie udało się wczytać pliku A: ${error.message}`);
   }
 }
 
@@ -206,17 +210,19 @@ async function onP3FileBPicked(event) {
   const file = event.target.files?.[0];
   fillSelect(ui.p3SheetB, []);
   state.p3WorkbookB = null;
+  state.p3TableB    = null;  // clear any previous data table
   if (!file) { refreshUiReadiness(); return; }
   try {
-    const wb = await readWorkbookFromFile(file);
+    const buf = await file.arrayBuffer();
+    const wb  = XLSX.read(buf, { type: "array", cellDates: true, cellFormula: false });
     const sheets = getWorkbookSheetNames(wb);
-    state.p3WorkbookB = wb;  // kept only so validateProcess3Inputs can check sheet list
+    state.p3WorkbookB = wb;
     fillSelect(ui.p3SheetB, sheets);
     hideInlineError();
     log(`Plik B: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    showError(`Nie udało się odczytać arkuszy z pliku B: ${error.message}`);
+    showError(`Nie udało się wczytać pliku B: ${error.message}`);
   }
 }
 
@@ -594,76 +600,94 @@ async function runProcess2() {
 
 async function runProcess3() {
   clearLog();
+  // Always start with clean tables
+  state.p3TableA = null;
+  state.p3TableB = null;
   try {
     validateProcess3Inputs();
     log("=== Process 3 ===");
 
-    // Always read both files completely fresh from the file input elements.
-    // No in-memory state is used — each run is fully independent.
-    const fileA = ui.p3FileA.files && ui.p3FileA.files[0];
-    const fileB = ui.p3FileB.files && ui.p3FileB.files[0];
-    if (!fileA) throw new Error("Wybierz plik A dla Process 3.");
-    if (!fileB) throw new Error("Wybierz plik B dla Process 3.");
-
     const sheetA = ui.p3SheetA.value;
     const sheetB = ui.p3SheetB.value;
-    if (!sheetA) throw new Error("Wybierz arkusz z pliku A.");
-    if (!sheetB) throw new Error("Wybierz arkusz z pliku B.");
 
-    log(`Plik A: ${fileA.name} / arkusz: ${sheetA}`);
-    log(`Plik B: ${fileB.name} / arkusz: ${sheetB}`);
+    // ── Build temporary table from file A ──
+    // Read visible cell values only (cellFormula:false = no formula strings, only stored values)
+    log(`Czytam plik A (${state.p3WorkbookA ? "loaded" : "missing"}) / arkusz: ${sheetA}`);
+    if (!state.p3WorkbookA) throw new Error("Wybierz plik A.");
+    const rowsA = XLSX.utils.sheet_to_json(
+      state.p3WorkbookA.Sheets[sheetA],
+      { defval: null, raw: true }
+    );
+    if (!rowsA.length) throw new Error(`Arkusz '${sheetA}' w pliku A jest pusty.`);
 
-    // Read plik A via raw XML to bypass xlsx.js formula cache.
-    // We need column "Total holidays" — exact cell values, not cached formulas.
-    log("Czytam plik A (raw XML)...");
-    const bufA = await fileA.arrayBuffer();
-    const srcSummary = await readSheetColumnsDirect(bufA, sheetA, {
-      idCandidates:    ["SAP ID", "Holid", "ID"],
-      nameCandidates:  ["Name", "Employee", "Employee Name"],
-      valueCandidates: ["Total holidays"],
-      valueLabel:      "Total holidays",
+    // Find columns
+    const colsA  = Object.keys(rowsA[0]);
+    const idColA = findColumn(colsA, ["Holid", "SAP ID", "ID"]);
+    const totColA = findColumn(colsA, ["Total holidays"]);
+    const nameColA = findColumn(colsA, ["Name", "Employee", "Employee Name"]);
+    if (!idColA)  throw new Error(`Plik A: brak kolumny ID (szukano: Holid, SAP ID, ID). Kolumny: ${colsA.join(", ")}`);
+    if (!totColA) throw new Error(`Plik A: brak kolumny 'Total holidays'. Kolumny: ${colsA.join(", ")}`);
+
+    // Build temporary table A: SAP ID → { totalHolidays, name }
+    state.p3TableA = new Map();
+    rowsA.forEach((row) => {
+      const sap = normalizeSap(row[idColA]);
+      if (!sap || !/^[0-9]+$/.test(sap)) return;
+      const val  = toNumberOrNull(row[totColA]);
+      const name = nameColA ? String(row[nameColA] || "").trim() : "";
+      state.p3TableA.set(sap, { totalHolidays: val, name });
     });
-    log(`  Plik A: ${srcSummary.length} rekordów.`);
-    srcSummary.forEach((r) => log(`  ID=${r["SAP ID"]} | Total holidays=${r["Total holidays"]}`));
+    log(`  Plik A: ${state.p3TableA.size} rekordów.`);
+    state.p3TableA.forEach((v, sap) => log(`  ID=${sap} | Total holidays=${v.totalHolidays}`));
 
-    // Read plik B via raw XML — column "Total holiday balance".
-    log("Czytam plik B (raw XML)...");
-    const bufB = await fileB.arrayBuffer();
-    const masterSummary = await readSheetColumnsDirect(bufB, sheetB, {
-      idCandidates:    ["SAP ID", "ID", "Holid"],
-      nameCandidates:  ["Employee", "Name", "Employee Name"],
-      valueCandidates: ["Total holiday balance"],
-      valueLabel:      "Total holiday balance",
+    // ── Build temporary table from file B ──
+    log(`Czytam plik B (${state.p3WorkbookB ? "loaded" : "missing"}) / arkusz: ${sheetB}`);
+    if (!state.p3WorkbookB) throw new Error("Wybierz plik B.");
+    const rowsB = XLSX.utils.sheet_to_json(
+      state.p3WorkbookB.Sheets[sheetB],
+      { defval: null, raw: true }
+    );
+    if (!rowsB.length) throw new Error(`Arkusz '${sheetB}' w pliku B jest pusty.`);
+
+    const colsB    = Object.keys(rowsB[0]);
+    const idColB   = findColumn(colsB, ["SAP ID", "ID", "Holid", "Employee"]);
+    const balColB  = findColumn(colsB, ["Total holiday balance"]);
+    const nameColB = findColumn(colsB, ["Employee", "Name", "Employee Name"]);
+    if (!idColB)  throw new Error(`Plik B: brak kolumny ID. Kolumny: ${colsB.join(", ")}`);
+    if (!balColB) throw new Error(`Plik B: brak kolumny 'Total holiday balance'. Kolumny: ${colsB.join(", ")}`);
+
+    // Build temporary table B: SAP ID → { totalHolidayBalance, name }
+    state.p3TableB = new Map();
+    rowsB.forEach((row) => {
+      const sap = normalizeSap(row[idColB]);
+      if (!sap || !/^[0-9]+$/.test(sap)) return;
+      const val  = toNumberOrNull(row[balColB]);
+      const name = nameColB ? String(row[nameColB] || "").trim() : "";
+      state.p3TableB.set(sap, { totalHolidayBalance: val, name });
     });
-    log(`  Plik B: ${masterSummary.length} rekordów.`);
-    masterSummary.forEach((r) => log(`  ID=${r["SAP ID"]} | Total holiday balance=${r["Total holiday balance"]}`));
+    log(`  Plik B: ${state.p3TableB.size} rekordów.`);
+    state.p3TableB.forEach((v, sap) => log(`  ID=${sap} | Total holiday balance=${v.totalHolidayBalance}`));
 
-    // Build lookup from plik B
-    const masterById = {};
-    const nameById   = {};
-    masterSummary.forEach((r) => {
-      masterById[r["SAP ID"]] = r["Total holiday balance"];
-      if (r["Employee Name"]) nameById[r["SAP ID"]] = r["Employee Name"];
-    });
-
-    // Compare
-    const compareRows = srcSummary.map((rec) => {
-      const sap = rec["SAP ID"];
-      const src = rec["Total holidays"];
-      const mst = masterById[sap] !== undefined ? masterById[sap] : null;
-      return {
-        "SAP ID":                          sap,
-        "Employee Name":                   rec["Employee Name"] || nameById[sap] || sap,
-        "Total holidays (source)":         src,
-        "Total holiday balance (master)":  mst,
+    // ── Compare ──
+    const compareRows = [];
+    state.p3TableA.forEach((recA, sap) => {
+      const recB = state.p3TableB.get(sap);
+      const src  = recA.totalHolidays;
+      const mst  = recB ? recB.totalHolidayBalance : null;
+      const name = recA.name || (recB ? recB.name : "") || sap;
+      compareRows.push({
+        "SAP ID":                         sap,
+        "Employee Name":                  name,
+        "Total holidays (source)":        src,
+        "Total holiday balance (master)": mst,
         Match: src !== null && mst !== null ? round2(src) === round2(mst) : false,
-      };
+      });
     });
 
-    const outWb = buildBalanceComparisonWorkbook(compareRows);
+    const outWb   = buildBalanceComparisonWorkbook(compareRows);
     const outName = `Balance comparison ${todayIso()}.xlsx`;
     writeWorkbookDownload(outWb, outName);
-    const mismatch = compareRows.filter((row) => row.Match !== true).length;
+    const mismatch = compareRows.filter((r) => r.Match !== true).length;
     setResultSummary([
       "Process 3 zakończony.",
       `Records: ${compareRows.length}.`,
@@ -672,8 +696,13 @@ async function runProcess3() {
       `Pobrany plik: ${outName}.`,
     ]);
     log(`Gotowe. Niezgodności: ${mismatch}.`);
+
   } catch (error) {
     showError(error.message);
+  } finally {
+    // Always clear temporary tables after process completes
+    state.p3TableA = null;
+    state.p3TableB = null;
   }
 }
 
