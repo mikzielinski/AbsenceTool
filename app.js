@@ -662,9 +662,9 @@ async function runProcess3() {
       });
     });
 
-    const outWb   = buildBalanceComparisonWorkbook(compareRows);
-    const outName = `Balance comparison ${todayIso()}.xlsx`;
-    writeWorkbookDownload(outWb, outName);
+    const outBytes3 = buildBalanceComparisonWorkbook(compareRows);
+    const outName   = `Balance comparison ${todayIso()}.xlsx`;
+    downloadStyledXlsx(outBytes3, outName);
     const mismatch = compareRows.filter((r) => r.Match !== true).length;
     setResultSummary([
       "Process 3 zakończony.",
@@ -868,9 +868,9 @@ async function runProcess4() {
     if (records.length === 0) throw new Error("Nie udało się sparsować żadnych rekordów z payslipów.");
 
     const reconciliationRows = buildPayslipReportRows(records, totals, specials, names);
-    const outWb = buildPayslipReportWorkbook(reconciliationRows);
-    const outName = `Payslip reconciliation ${todayIso()}.xlsx`;
-    writeWorkbookDownload(outWb, outName);
+    const outBytes4 = buildPayslipReportWorkbook(reconciliationRows);
+    const outName   = `Payslip reconciliation ${todayIso()}.xlsx`;
+    downloadStyledXlsx(outBytes4, outName);
     const mismatches = reconciliationRows.filter((row) => !(row.Result && row["Special result"])).length;
     setResultSummary([
       "Process 4 zakończony.",
@@ -1626,6 +1626,174 @@ function buildWorkbookFromRows(sheetName, headers, rows) {
   return wb;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build styled xlsx from scratch using raw XML + fflate zip.
+// This bypasses xlsx.js style limitations and supports red fill properly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildStyledXlsx(sheetName, headers, rows, isRedRow) {
+  // Escape XML special chars
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Shared strings table
+  const strings = [];
+  const strIdx  = new Map();
+  function si(val) {
+    const s = String(val ?? "");
+    if (!strIdx.has(s)) { strIdx.set(s, strings.length); strings.push(s); }
+    return strIdx.get(s);
+  }
+
+  // Pre-register all strings
+  headers.forEach((h) => si(h));
+  rows.forEach((row) => {
+    headers.forEach((h) => {
+      const v = row[h];
+      if (v === null || v === undefined) return;
+      if (typeof v !== "number") si(String(v));
+    });
+  });
+
+  // Column letter helper
+  function colLetter(n) {
+    let s = "";
+    for (let c = n; c >= 0; c = Math.floor(c / 26) - 1)
+      s = String.fromCharCode(65 + (c % 26)) + s;
+    return s;
+  }
+
+  // Style indices:
+  // 0 = default
+  // 1 = header (blue bg, white bold)
+  // 2 = red fill
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="3">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><sz val="11"/><name val="Calibri"/><b/><color rgb="FFFFFFFF"/></font>
+    <font><sz val="11"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="4">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFF0000"/></patternFill></fill>
+  </fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="3">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment horizontal="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFill="1"/>
+  </cellXfs>
+</styleSheet>`;
+
+  // Build sheet XML
+  let sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>`;
+
+  // Header row (style 1)
+  sheetXml += `<row r="1">`;
+  headers.forEach((h, ci) => {
+    const ref = `${colLetter(ci)}1`;
+    sheetXml += `<c r="${ref}" t="s" s="1"><v>${si(h)}</v></c>`;
+  });
+  sheetXml += `</row>`;
+
+  // Data rows
+  rows.forEach((row, ri) => {
+    const rn  = ri + 2;
+    const red = isRedRow(row);
+    const s   = red ? ` s="2"` : "";
+    sheetXml += `<row r="${rn}">`;
+    headers.forEach((h, ci) => {
+      const ref = `${colLetter(ci)}${rn}`;
+      const v   = row[h];
+      if (v === null || v === undefined) {
+        sheetXml += `<c r="${ref}"${s}/>`;
+      } else if (typeof v === "number") {
+        sheetXml += `<c r="${ref}"${s}><v>${v}</v></c>`;
+      } else if (typeof v === "boolean") {
+        sheetXml += `<c r="${ref}" t="b"${s}><v>${v ? 1 : 0}</v></c>`;
+      } else {
+        sheetXml += `<c r="${ref}" t="s"${s}><v>${si(String(v))}</v></c>`;
+      }
+    });
+    sheetXml += `</row>`;
+  });
+
+  sheetXml += `</sheetData></worksheet>`;
+
+  // Shared strings XML
+  const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">
+${strings.map((s) => `<si><t xml:space="preserve">${esc(s)}</t></si>`).join("")}
+</sst>`;
+
+  const wbXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="${esc(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`;
+
+  const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+  const appRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+
+  const enc = window.fflate.strToU8;
+  const zipped = {
+    "[Content_Types].xml":          enc(contentTypes),
+    "_rels/.rels":                   enc(appRels),
+    "xl/workbook.xml":               enc(wbXml),
+    "xl/_rels/workbook.xml.rels":    enc(wbRels),
+    "xl/worksheets/sheet1.xml":      enc(sheetXml),
+    "xl/sharedStrings.xml":          enc(ssXml),
+    "xl/styles.xml":                 enc(stylesXml),
+  };
+
+  return window.fflate.zipSync(zipped, { level: 6 });
+}
+
+function downloadStyledXlsx(bytes, filename) {
+  const blob = new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = filename.endsWith(".xlsx") ? filename : filename + ".xlsx";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function buildBalanceComparisonWorkbook(rows) {
   const headers = [
     "SAP ID",
@@ -1634,20 +1802,12 @@ function buildBalanceComparisonWorkbook(rows) {
     "Total holiday balance (master)",
     "Match",
   ];
-  const wsRows = [headers, ...rows.map((row) => headers.map((h) => row[h] ?? null))];
-  const ws = XLSX.utils.aoa_to_sheet(wsRows);
-  applyHeaderStyles(ws, headers.length);
-  rows.forEach((row, idx) => {
-    if (row.Match !== true) {
-      for (let c = 0; c < headers.length; c += 1) {
-        markRed(ws, idx + 1, c);
-      }
-    }
-  });
-  autoWidth(ws, wsRows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Balance comparison");
-  return wb;
+  return buildStyledXlsx(
+    "Balance comparison",
+    headers,
+    rows,
+    (row) => row.Match !== true
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1861,23 +2021,12 @@ function buildPayslipReportWorkbook(rows) {
     "Payslip special holiday value",
     "Special result",
   ];
-  const wsRows = [headers, ...rows.map((row) => headers.map((h) => row[h] ?? null))];
-  const ws = XLSX.utils.aoa_to_sheet(wsRows);
-  applyHeaderStyles(ws, headers.length);
-  rows.forEach((row, idx) => {
-    const r = idx + 1;
-    const anyFalse = row.Result !== true || row["Special result"] !== true;
-    if (anyFalse) {
-      // Highlight entire row when any result is False
-      for (let c = 0; c < headers.length; c += 1) {
-        markRed(ws, r, c);
-      }
-    }
-  });
-  autoWidth(ws, wsRows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Reconciliation");
-  return wb;
+  return buildStyledXlsx(
+    "Reconciliation",
+    headers,
+    rows,
+    (row) => row.Result !== true || row["Special result"] !== true
+  );
 }
 
 function markRed(ws, rowIndex, colIndex) {
