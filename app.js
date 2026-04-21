@@ -27,11 +27,9 @@ const state = {
   p3WorkbookA: null,
   p3WorkbookAName: "",
   p3SheetsA: [],
-  p3TableA: null,  // temporary data table — cleared after process runs
   p3WorkbookB: null,
   p3WorkbookBName: "",
   p3SheetsB: [],
-  p3TableB: null,  // temporary data table — cleared after process runs
   masterWorkbook: null,
   masterWorkbookName: "",
   masterWorkbookBytes: null,
@@ -40,6 +38,17 @@ const state = {
   masterWorkbookNameP2: "",
   masterSheetsP2: [],
 };
+
+// Wipe ALL workbook data from state.
+// Called at the start of every process — nothing carried over between runs.
+function clearWorkbookState() {
+  state.sourceWorkbook      = null;
+  state.masterWorkbook      = null;
+  state.masterWorkbookBytes = null;
+  state.p3WorkbookA         = null;
+  state.p3WorkbookB         = null;
+  state.masterWorkbookP2    = null;
+}
 
 const ui = {
   monthLabel: document.getElementById("monthLabel"),
@@ -188,21 +197,19 @@ async function onP3FileAPicked(event) {
   const file = event.target.files?.[0];
   fillSelect(ui.p3SheetA, []);
   state.p3WorkbookA = null;
-  state.p3TableA    = null;  // clear any previous data table
+  state.p3TableA    = null;
   if (!file) { refreshUiReadiness(); return; }
   try {
-    const buf = await file.arrayBuffer();
-    // Use xlsx.js with cellFormula:false so we get ONLY stored cell values, no formula strings
-    const wb  = XLSX.read(buf, { type: "array", cellDates: true, cellFormula: false });
+    // Read sheet names ONLY for the dropdown — nothing else stored
+    const buf    = await file.arrayBuffer();
+    const wb     = XLSX.read(buf, { type: "array", bookSheets: true });
     const sheets = getWorkbookSheetNames(wb);
-    // Store the workbook temporarily just to populate the sheet dropdown
-    state.p3WorkbookA = wb;
     fillSelect(ui.p3SheetA, sheets);
     hideInlineError();
     log(`Plik A: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    showError(`Nie udało się wczytać pliku A: ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z pliku A: ${error.message}`);
   }
 }
 
@@ -210,19 +217,19 @@ async function onP3FileBPicked(event) {
   const file = event.target.files?.[0];
   fillSelect(ui.p3SheetB, []);
   state.p3WorkbookB = null;
-  state.p3TableB    = null;  // clear any previous data table
+  state.p3TableB    = null;
   if (!file) { refreshUiReadiness(); return; }
   try {
-    const buf = await file.arrayBuffer();
-    const wb  = XLSX.read(buf, { type: "array", cellDates: true, cellFormula: false });
+    // Read sheet names ONLY for the dropdown — nothing else stored
+    const buf    = await file.arrayBuffer();
+    const wb     = XLSX.read(buf, { type: "array", bookSheets: true });
     const sheets = getWorkbookSheetNames(wb);
-    state.p3WorkbookB = wb;
     fillSelect(ui.p3SheetB, sheets);
     hideInlineError();
     log(`Plik B: ${file.name} (${sheets.length} arkusz(e): ${sheets.join(", ")})`);
     refreshUiReadiness();
   } catch (error) {
-    showError(`Nie udało się wczytać pliku B: ${error.message}`);
+    showError(`Nie udało się odczytać arkuszy z pliku B: ${error.message}`);
   }
 }
 
@@ -496,19 +503,17 @@ function validateProcess2Inputs() {
 }
 
 function validateProcess3Inputs() {
-  if (!ui.p3FileA.files || !ui.p3FileA.files[0]) {
+  if (!ui.p3FileA.files || !ui.p3FileA.files[0])
     throw new Error("Wybierz plik A dla Process 3.");
-  }
-  if (!ui.p3FileB.files || !ui.p3FileB.files[0]) {
+  if (!ui.p3FileB.files || !ui.p3FileB.files[0])
     throw new Error("Wybierz plik B dla Process 3.");
-  }
-  if (!ui.p3SheetA.value || !ui.p3SheetB.value) {
-    throw new Error("Wybierz wymagane sheety dla Process 3 (plik A i plik B).");
-  }
+  if (!ui.p3SheetA.value || !ui.p3SheetB.value)
+    throw new Error("Wybierz arkusze dla Process 3.");
 }
 
 async function runProcess1() {
   clearLog();
+  clearWorkbookState();  // always start fresh — no data from previous processes
   try {
     validateProcess1Inputs();
     log("=== Process 1 ===");
@@ -548,6 +553,7 @@ async function runProcess1() {
 
 async function runProcess2() {
   clearLog();
+  clearWorkbookState();  // always start fresh — no data from previous processes
   try {
     validateProcess2Inputs();
     log("=== Process 2 ===");
@@ -600,12 +606,14 @@ async function runProcess2() {
 
 async function runProcess3() {
   clearLog();
+  clearWorkbookState();  // always start fresh — no data from previous processes
   state.p3TableA = null;
   state.p3TableB = null;
   try {
     validateProcess3Inputs();
     log("=== Process 3 ===");
 
+    // Read ONLY from the file inputs — no state, no cache
     const fileA = ui.p3FileA.files && ui.p3FileA.files[0];
     const fileB = ui.p3FileB.files && ui.p3FileB.files[0];
     if (!fileA) throw new Error("Wybierz plik A.");
@@ -614,36 +622,34 @@ async function runProcess3() {
     const sheetA = ui.p3SheetA.value;
     const sheetB = ui.p3SheetB.value;
 
-    // ── Read plik A via raw XML ──
-    // Reads the exact <v> value stored in each cell (what Excel shows on screen).
-    // Never uses formula strings or cached state.
+    // Read plik A fresh from disk — arrayBuffer() reads the actual file bytes
     log(`Czytam plik A: ${fileA.name} / ${sheetA}`);
     const bufA = await fileA.arrayBuffer();
-    state.p3TableA = await buildTempTable(bufA, sheetA, {
+    const tableA = await buildTempTable(bufA, sheetA, {
       idCandidates:    ["Holid", "SAP ID", "ID"],
       valueCandidates: ["Total holidays"],
       nameCandidates:  ["Name", "Employee", "Employee Name"],
       valueKey: "totalHolidays",
     });
-    log(`  Plik A: ${state.p3TableA.size} rekordów.`);
-    state.p3TableA.forEach((v, sap) => log(`  ID=${sap} | Total holidays=${v.totalHolidays}`));
+    log(`  Plik A: ${tableA.size} rekordów.`);
+    tableA.forEach((v, sap) => log(`  ID=${sap} | Total holidays=${v.totalHolidays}`));
 
-    // ── Read plik B via raw XML ──
+    // Read plik B fresh from disk
     log(`Czytam plik B: ${fileB.name} / ${sheetB}`);
     const bufB = await fileB.arrayBuffer();
-    state.p3TableB = await buildTempTable(bufB, sheetB, {
+    const tableB = await buildTempTable(bufB, sheetB, {
       idCandidates:    ["SAP ID", "ID", "Holid"],
       valueCandidates: ["Total holiday balance"],
       nameCandidates:  ["Employee", "Name", "Employee Name"],
       valueKey: "totalHolidayBalance",
     });
-    log(`  Plik B: ${state.p3TableB.size} rekordów.`);
-    state.p3TableB.forEach((v, sap) => log(`  ID=${sap} | Total holiday balance=${v.totalHolidayBalance}`));
+    log(`  Plik B: ${tableB.size} rekordów.`);
+    tableB.forEach((v, sap) => log(`  ID=${sap} | Total holiday balance=${v.totalHolidayBalance}`));
 
     // ── Compare ──
     const compareRows = [];
-    state.p3TableA.forEach((recA, sap) => {
-      const recB = state.p3TableB.get(sap);
+    tableA.forEach((recA, sap) => {
+      const recB = tableB.get(sap);
       const src  = recA.totalHolidays;
       const mst  = recB ? recB.totalHolidayBalance : null;
       const name = recA.name || (recB ? recB.name : "") || sap;
@@ -672,6 +678,7 @@ async function runProcess3() {
   } catch (error) {
     showError(error.message);
   } finally {
+    // No state was stored — nothing to clear
     state.p3TableA = null;
     state.p3TableB = null;
   }
@@ -801,6 +808,7 @@ function resolveMasterForP2() {
 
 async function runProcess4() {
   clearLog();
+  clearWorkbookState();  // always start fresh — no data from previous processes
   try {
     log("=== Process 4 ===");
     const pdfFiles = Array.from(ui.payslipFiles.files || []);
