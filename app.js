@@ -987,6 +987,10 @@ function buildBalanceSummaryFromSource(rows) {
     if (!sap || !project) {
       return;
     }
+    // Unpaid leave is not deducted from holiday balance — skip
+    if (project.includes("1409") || project.includes("unpaid leave")) {
+      return;
+    }
     const type = BALANCE_TYPE_MAP[project] || "Holiday";
     const days = Number(row.Days || 0);
     if (!resultMap.has(sap)) {
