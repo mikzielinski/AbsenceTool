@@ -997,9 +997,13 @@ function buildBalanceSummaryFromSource(rows) {
       resultMap.set(sap, { "SAP ID": sap, Holiday: 0, Special: 0 });
     }
     const rec = resultMap.get(sap);
-    rec[type] = round2(Number(rec[type] || 0) + days);
+    rec[type] = Number(rec[type] || 0) + days;  // accumulate raw, round only at the end
   });
-  return Array.from(resultMap.values());
+  return Array.from(resultMap.values()).map((rec) => ({
+    ...rec,
+    Holiday: round2(rec.Holiday),
+    Special: round2(rec.Special),
+  }));
 }
 
 function buildMasterUpdatePlan(workbook, sheetName, summaryRows, monthLabel) {
